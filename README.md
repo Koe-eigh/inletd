@@ -8,19 +8,32 @@ Recent development workflows increasingly involve local agents and tools that ne
 
 ## Architecture Overview
 
-`inletd` is designed around a simple pipeline.
+`inletd` is centered around a routing engine that connects remote events to trusted local actions.
 
 ```text
 
-Event Source -> Routing Rules -> Local Actions
+Event Source -> Routing Engine -> Local Actions
 
 ```
 
-These three concepts form the mental model of the system.
+The system has three user-facing abstractions.
 
-- **Event Source** defines where events enter the system.
-- **Routing Rules** determine how events are mapped to actions.
+- **Event Sources** provide events.
+- **Routing Engine** determine whice action should handle each event.
 - **Local Actions** represent trusted workloads that can run on the local machine.
 
-The core design policy is separation of concerns. Event acquisition, routing and execution are independent layers, so each can evolve without affecting the others.
+The routing engine is the core of `inletd`. Event sources and local actions are adapters around it, keeping ther router independent of any particular transport or workloads.
+
+### Routing Strategies
+
+- **Declarative Routing** lets the user directly define associations between events and actions.
+- **Functional Routing** letes the user define a function that determines the destination at runtime. The function may be deterministic code, a classifier, or an LLM-based router such as Jev.
+
+Both strategies expose the same fouting abstraction: `Event -> Action`
+
+The difference is only how that decision is produced.
+
+The overall mental model remains:
+
+**Events enter, routing decides, actions run.**
 
