@@ -4,7 +4,7 @@ A demon for routing remote events into local workloads.
 
 ## The Idea
 
-Recent development workflows increasingly involve local agents and tools that need to react to events happpening in remote systems. However, a local machine sits behind NAT and a firewall and has no public endpoint. Instead of exposing the local machine to the internet, `inletd` maintains an authenticated outbound subscription to an event transport such as [ntfy](https://ntfy.sh/).
+Recent development workflows increasingly involve AI agents and tools that need to react to events happening in remote systems. However, heavy agentic workloads in a cloud environment are so expensive. In this context, detecting remote changes and running heavy workloads in a local environment is an attractive prospect. Another problem is that a local machine sits behind NAT and a firewall and has no public endpoint. Instead of exposing the local machine to the internet, `inletd` maintains an authenticated outbound subscription to an event transport such as [ntfy](https://ntfy.sh/).
 
 ## Architecture Overview
 
