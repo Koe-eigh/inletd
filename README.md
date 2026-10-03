@@ -8,16 +8,19 @@ Recent development workflows increasingly involve local agents and tools that ne
 
 ## Architecture Overview
 
-```mermaid
+`inletd` is designed around a simple pipeline.
 
-graph TB;
-    EventSource -- events --> inletd(
-        inletd
-        recive, validate and route
-    )
-    inletd -- structured event --> LocalWorkload(
-        Local workload
-        agent / script / tool / ...
-    )
+```text
+
+Event Source -> Routing Rules -> Local Actions
 
 ```
+
+These three concepts form the mental model of the system.
+
+- **Event Source** defines where events enter the system.
+- **Routing Rules** determine how events are mapped to actions.
+- **Local Actions** represent trusted workloads that can run on the local machine.
+
+The core design policy is separation of concerns. Event acquisition, routing and execution are independent layers, so each can evolve without affecting the others.
+
