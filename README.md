@@ -27,7 +27,7 @@ The routing engine is the core of `inletd`. Event sources and local actions are 
 ### Routing Strategies
 
 - **Declarative Routing** lets the user directly define associations between events and actions.
-- **Functional Routing** letes the user define a function that determines the destination at runtime. The function may be deterministic code, a classifier, or an LLM-based router such as Jev.
+- **Functional Routing** letes the user define a function that determines the destination at runtime. The function may be deterministic code, a classifier, or an LLM-based router such as [Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev).
 
 Both strategies expose the same fouting abstraction: `Event -> Action`
 
