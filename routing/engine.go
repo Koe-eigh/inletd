@@ -13,7 +13,7 @@ type DeclarativeRouter struct {
 }
 
 func (router *DeclarativeRouter) Route(ctx context.Context, event Event) ([]Action, error) {
-	actions, found := router.routeMap[event];
+	actions, found := router.routeMap[event]
 	if !found {
 		return []Action{}, nil
 	}
@@ -31,4 +31,20 @@ func NewDeclarativeRouter(routeConfig map[string][]string) *DeclarativeRouter {
 	}
 
 	return &DeclarativeRouter{routeMap: routeMap}
+}
+
+// FunctionalRouter delegates routing decisions to a supplied function.
+// The function selects actions; it does not execute them.
+type FunctionalRouter struct {
+	route func(context.Context, Event) ([]Action, error)
+}
+
+// NewFunctionalRouter creates a router using route, which must not be nil.
+// The function can return an empty action slice to ignore an event.
+func NewFunctionalRouter(route func(context.Context, Event) ([]Action, error)) *FunctionalRouter {
+	return &FunctionalRouter{route: route}
+}
+
+func (router *FunctionalRouter) Route(ctx context.Context, event Event) ([]Action, error) {
+	return router.route(ctx, event)
 }

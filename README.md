@@ -33,7 +33,23 @@ Both strategies expose the same fouting abstraction: `Event -> Action`
 
 The difference is only how that decision is produced.
 
+`routing.NewFunctionalRouter` accepts a function with the same signature as
+`Router.Route`. It calls the function for every event, passing through the caller's
+context and returning the selected actions and error unchanged:
+
+```go
+router := routing.NewFunctionalRouter(func(ctx context.Context, event routing.Event) ([]routing.Action, error) {
+    if event.Name() == "pull_request.opened" {
+        return []routing.Action{routing.NewAction("review")}, nil
+    }
+    return nil, nil // Ignore this event.
+})
+```
+
+The supplied function must be non-nil. It selects actions; execution belongs to
+the caller. This is the core routing abstraction; integrations for user code in
+other languages can supply their decisions through this function.
+
 The overall mental model remains:
 
 **Events enter, routing decides, actions run.**
-
