@@ -18,13 +18,13 @@ func TestDeclarativeRouter(t *testing.T) {
 	actionsForEvent2, err2 := testDeclarativeRouter.Route(ctx, routing.NewEvent("test_event2"))
 
 	if err1 != nil {
-		t.Fatalf("Route(test_event1) failed: %v", err1)
+		t.Fatalf("Expected nil")
 	}
-
+	
 	if err2 != nil {
-		t.Fatalf("Route(test_event1) failed: %v", err2)
+		t.Fatalf("Expected nil")
 	}
-
+	
 	if actionsForEvent1[0].Name() != testRouteMap["test_event1"][0] || actionsForEvent1[1].Name() != testRouteMap["test_event1"][1] {
 		t.Errorf("Expected: test_action1, test_action2. Actual: %v, %v", actionsForEvent1[0].Name(), actionsForEvent1[1].Name())
 	} 
@@ -34,10 +34,10 @@ func TestDeclarativeRouter(t *testing.T) {
 	}
 
 	// unknown events
-	events, err := testDeclarativeRouter.Route(ctx, routing.NewEvent("test_event3"))
+	actions, err := testDeclarativeRouter.Route(ctx, routing.NewEvent("test_event3"))
 
-	if events != nil || err == nil {
-		t.Errorf("Expected: {events: nil, err: error}. Actual: {events: %v, err: %v}", events, err)
+	if len(actions) != 0 || err != nil {
+		t.Fatalf("Expected: {events: []}. Actual: {events: %v}", actions)
 	}
 }
 

@@ -2,7 +2,6 @@ package routing
 
 import (
 	"context"
-	"errors"
 )
 
 type Router interface {
@@ -16,7 +15,7 @@ type DeclarativeRouter struct {
 func (router *DeclarativeRouter) Route(ctx context.Context, event Event) ([]Action, error) {
 	actions, found := router.routeMap[event];
 	if !found {
-		return nil, errors.New("Not found routing config.")
+		return []Action{}, nil
 	}
 	return actions, nil
 }
