@@ -43,6 +43,29 @@ func TestDeclarativeRouter(t *testing.T) {
 	}
 }
 
+func TestDeclarativeRouterResultDoesNotChangeConfiguration(t *testing.T) {
+	router := routing.NewDeclarativeRouter(map[string][]string{"event": {"review", "notify"}})
+	ctx := t.Context()
+	event := routing.NewEvent("event")
+
+	actions, err := router.Route(ctx, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 2 {
+		t.Fatalf("expected two actions, got %v", actions)
+	}
+	actions[0] = routing.NewAction("replacement")
+
+	next, err := router.Route(ctx, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next) != 2 || next[0].Name() != "review" || next[1].Name() != "notify" {
+		t.Fatalf("expected configured review and notify actions after modifying a previous result, got %v", next)
+	}
+}
+
 func TestFunctionalRouter(t *testing.T) {
 	ctx := t.Context()
 	calls := 0

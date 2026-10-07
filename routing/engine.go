@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"slices"
 )
 
 type Router interface {
@@ -17,7 +18,7 @@ func (router *DeclarativeRouter) Route(ctx context.Context, event Event) ([]Acti
 	if !found {
 		return []Action{}, nil
 	}
-	return actions, nil
+	return slices.Clone(actions), nil
 }
 
 func NewDeclarativeRouter(routeConfig map[string][]string) *DeclarativeRouter {
