@@ -78,3 +78,23 @@ Declarative routing uses only the event name to select actions. Source identity,
 source event ID, source event time, and payload do not change a declarative match.
 An unmatched event returns an empty action slice. The router only selects actions;
 the caller handles subscriptions and execution.
+
+### Source and Executor Contracts
+
+`routing.Source` receives events with `Receive(ctx, deliver)`. It invokes the
+delivery callback synchronously, waiting for each call to finish before sending
+another event. This gives the caller a place to route and execute each event and
+provides backpressure to the source. `Receive` returns `nil` when the source
+finishes normally, or an error if the source fails. A delivery error stops intake
+and is returned to the caller; wrapping it is allowed if `errors.Is` still finds
+the original error. Cancellation stops intake and returns an error matching
+`ctx.Err()`. A source must not deliver events after `Receive` returns. The
+delivery callback should honor the same context so cancellation can interrupt
+in-progress handling.
+
+`routing.ActionExecutor` runs `Execute(ctx, action, event)` for each selected
+action. It receives the entire event envelope, including source metadata and
+payload, so an action can use the same context the router inspected. Execution
+returns `nil` on success, an error on failure, and an error matching `ctx.Err()`
+on cancellation. Both contracts depend only on `context` and the routing types;
+transport subscriptions and workload processes belong in their adapters.
