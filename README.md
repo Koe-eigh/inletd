@@ -53,3 +53,23 @@ other languages can supply their decisions through this function.
 The overall mental model remains:
 
 **Events enter, routing decides, actions run.**
+
+### Event Envelopes
+
+`routing.Event` carries a name, source identity, optional source event ID and
+time, and opaque payload bytes. Sources can construct one without introducing
+transport-specific types into the routing package:
+
+```go
+event := routing.NewEvent("pull_request.opened",
+    routing.WithSource("github"),
+    routing.WithSourceEventID("delivery-42"),
+    routing.WithPayload(message),
+)
+```
+
+`routing.NewEvent(name)` remains valid for events without source metadata.
+An empty source or source event ID and a zero source event time mean those values
+were not provided. `NewEvent` copies payload bytes when the option is applied,
+and `Payload()` returns a fresh copy. The same event can therefore be handed to
+the router and a later executor without either caller mutating its payload.
