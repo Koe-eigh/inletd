@@ -5,11 +5,14 @@ import (
 	"time"
 )
 
+// EventName identifies an event for declarative routing.
+type EventName string
+
 // Event is a transport-independent envelope for a named event.
 // Its source is empty when unspecified. A zero source event time and an empty
 // source event ID mean that the source did not provide those fields.
 type Event struct {
-	name            string
+	name            EventName
 	source          string
 	sourceEventID   string
 	sourceEventTime time.Time
@@ -17,7 +20,7 @@ type Event struct {
 }
 
 func (event Event) Name() string {
-	return event.name
+	return string(event.name)
 }
 
 func (event Event) Source() string {
@@ -61,7 +64,7 @@ func WithPayload(payload []byte) EventOption {
 
 // NewEvent constructs an event. Calls with only a name remain valid.
 func NewEvent(name string, options ...EventOption) Event {
-	event := Event{name: name}
+	event := Event{name: EventName(name)}
 	for _, option := range options {
 		option(&event)
 	}
