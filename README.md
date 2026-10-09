@@ -81,7 +81,7 @@ the caller handles subscriptions and execution.
 
 ### Source and Executor Contracts
 
-`routing.Source` receives events with `Receive(ctx, deliver)`. It invokes the
+`daemon.Source` receives events with `Receive(ctx, deliver)`. It invokes the
 delivery callback synchronously, waiting for each call to finish before sending
 another event. This gives the caller a place to route and execute each event and
 provides backpressure to the source. `Receive` returns `nil` when the source
@@ -92,7 +92,7 @@ the original error. Cancellation stops intake and returns an error matching
 delivery callback should honor the same context so cancellation can interrupt
 in-progress handling.
 
-`routing.ActionExecutor` runs `Execute(ctx, action, event)` for each selected
+`daemon.ActionExecutor` runs `Execute(ctx, action, event)` for each selected
 action. It receives the entire event envelope, including source metadata and
 payload, so an action can use the same context the router inspected. Execution
 returns `nil` on success, an error on failure, and an error matching `ctx.Err()`

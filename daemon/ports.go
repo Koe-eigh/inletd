@@ -1,6 +1,10 @@
-package routing
+package daemon
 
-import "context"
+import (
+	"context"
+
+	"github.com/Koe-eigh/inletd/routing"
+)
 
 // Source delivers events until it finishes, encounters an error, or ctx is
 // cancelled. Receive calls deliver synchronously for each event and waits for
@@ -11,7 +15,7 @@ import "context"
 // ctx.Err(). The caller's deliver function should also honor ctx cancellation.
 // Receive must not call deliver after returning.
 type Source interface {
-	Receive(ctx context.Context, deliver func(Event) error) error
+	Receive(ctx context.Context, deliver func(routing.Event) error) error
 }
 
 // ActionExecutor runs a selected action with the event that selected it.
@@ -19,5 +23,5 @@ type Source interface {
 // honor ctx cancellation and return an error matching ctx.Err() when cancelled.
 // The Event is read-only; its Payload method returns a copy of the bytes.
 type ActionExecutor interface {
-	Execute(ctx context.Context, action Action, event Event) error
+	Execute(ctx context.Context, action routing.Action, event routing.Event) error
 }

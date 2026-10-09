@@ -1,4 +1,4 @@
-package routing_test
+package daemon_test
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Koe-eigh/inletd/daemon"
 	"github.com/Koe-eigh/inletd/routing"
 )
 
@@ -29,7 +30,7 @@ func (executor *recordingExecutor) Execute(ctx context.Context, action routing.A
 	return nil
 }
 
-func TestAdapterContractsPassSelectedActionAndFullEvent(t *testing.T) {
+func TestSourceAndExecutorContractsPassSelectedActionAndFullEvent(t *testing.T) {
 	eventTime := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
 	event := routing.NewEvent("pull_request.opened",
 		routing.WithSource("github"),
@@ -37,9 +38,9 @@ func TestAdapterContractsPassSelectedActionAndFullEvent(t *testing.T) {
 		routing.WithSourceEventTime(eventTime),
 		routing.WithPayload([]byte(`{"number":42}`)),
 	)
-	var source routing.Source = oneEventSource{event: event}
+	var source daemon.Source = oneEventSource{event: event}
 	executor := &recordingExecutor{}
-	var actionExecutor routing.ActionExecutor = executor
+	var actionExecutor daemon.ActionExecutor = executor
 	router := routing.NewDeclarativeRouter(map[string][]string{"pull_request.opened": {"review"}})
 	ctx := t.Context()
 
