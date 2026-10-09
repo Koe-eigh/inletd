@@ -36,10 +36,6 @@ func TestEventEnvelopeAndPayloadOwnership(t *testing.T) {
 
 func TestEventOptionalFields(t *testing.T) {
 	legacy := routing.NewEvent("ping")
-	var name routing.EventName = legacy.Name()
-	if name != "ping" {
-		t.Fatalf("unexpected event name: %q", name)
-	}
 	if legacy.Name() != "ping" || legacy.Source() != "" || legacy.SourceEventID() != "" || !legacy.SourceEventTime().IsZero() || legacy.Payload() != nil {
 		t.Fatalf("unexpected legacy event: %+v", legacy)
 	}
