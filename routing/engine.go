@@ -14,7 +14,7 @@ type DeclarativeRouter struct {
 }
 
 func (router *DeclarativeRouter) Route(ctx context.Context, event Event) ([]Action, error) {
-	actions, found := router.routeMap[event.name]
+	actions, found := router.routeMap[event.Name()]
 	if !found {
 		return []Action{}, nil
 	}

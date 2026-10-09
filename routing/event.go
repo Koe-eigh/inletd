@@ -19,8 +19,8 @@ type Event struct {
 	payload         []byte
 }
 
-func (event Event) Name() string {
-	return string(event.name)
+func (event Event) Name() EventName {
+	return event.name
 }
 
 func (event Event) Source() string {
