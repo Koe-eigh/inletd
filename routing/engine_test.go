@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Koe-eigh/inletd/routing"
 )
@@ -63,6 +64,65 @@ func TestDeclarativeRouterResultDoesNotChangeConfiguration(t *testing.T) {
 	}
 	if len(next) != 2 || next[0].Name() != "review" || next[1].Name() != "notify" {
 		t.Fatalf("expected configured review and notify actions after modifying a previous result, got %v", next)
+	}
+}
+
+func TestDeclarativeRouterMatchesOnlyEventName(t *testing.T) {
+	router := routing.NewDeclarativeRouter(map[string][]string{
+		"pull_request.opened": {"review", "notify"},
+	})
+	eventTime := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name  string
+		event routing.Event
+		want  []string
+	}{
+		{"name only", routing.NewEvent("pull_request.opened"), []string{"review", "notify"}},
+		{"source", routing.NewEvent("pull_request.opened", routing.WithSource("github")), []string{"review", "notify"}},
+		{"source ID", routing.NewEvent("pull_request.opened", routing.WithSourceEventID("delivery-42")), []string{"review", "notify"}},
+		{"source time", routing.NewEvent("pull_request.opened", routing.WithSourceEventTime(eventTime)), []string{"review", "notify"}},
+		{"payload", routing.NewEvent("pull_request.opened", routing.WithPayload([]byte(`{"number":42}`))), []string{"review", "notify"}},
+		{"all metadata", routing.NewEvent("pull_request.opened", routing.WithSource("github"), routing.WithSourceEventID("delivery-42"), routing.WithSourceEventTime(eventTime), routing.WithPayload([]byte(`{"number":42}`))), []string{"review", "notify"}},
+		{"unknown name with metadata", routing.NewEvent("pull_request.closed", routing.WithSource("github"), routing.WithSourceEventID("delivery-42"), routing.WithSourceEventTime(eventTime), routing.WithPayload([]byte(`{"number":42}`))), nil},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			actions, err := router.Route(t.Context(), test.event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if actions == nil {
+				t.Fatal("declarative router returned a nil action slice")
+			}
+			if len(actions) != len(test.want) {
+				t.Fatalf("expected %d actions, got %v", len(test.want), actions)
+			}
+			for i, want := range test.want {
+				if actions[i].Name() != want {
+					t.Errorf("action %d: expected %q, got %q", i, want, actions[i].Name())
+				}
+			}
+		})
+	}
+}
+
+func TestDeclarativeRouterEnrichedEventResultDoesNotChangeConfiguration(t *testing.T) {
+	router := routing.NewDeclarativeRouter(map[string][]string{"event": {"review", "notify"}})
+	event := routing.NewEvent("event", routing.WithSource("github"), routing.WithPayload([]byte(`{"number":42}`)))
+
+	actions, err := router.Route(t.Context(), event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions[0] = routing.NewAction("replacement")
+
+	next, err := router.Route(t.Context(), event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next) != 2 || next[0].Name() != "review" || next[1].Name() != "notify" {
+		t.Fatalf("expected configured actions after modifying a previous result, got %v", next)
 	}
 }
 

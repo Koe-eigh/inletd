@@ -73,3 +73,8 @@ An empty source or source event ID and a zero source event time mean those value
 were not provided. `NewEvent` copies payload bytes when the option is applied,
 and `Payload()` returns a fresh copy. The same event can therefore be handed to
 the router and a later executor without either caller mutating its payload.
+
+Declarative routing uses only the event name to select actions. Source identity,
+source event ID, source event time, and payload do not change a declarative match.
+An unmatched event returns an empty action slice. The router only selects actions;
+the caller handles subscriptions and execution.
