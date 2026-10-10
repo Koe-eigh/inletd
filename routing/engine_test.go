@@ -168,3 +168,16 @@ func TestFunctionalRouterPropagatesError(t *testing.T) {
 		t.Fatalf("expected nil actions and original error, got %v, %v", actions, err)
 	}
 }
+
+func TestFunctionalRouterPropagatesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	router := routing.NewFunctionalRouter(func(ctx context.Context, _ routing.Event) ([]routing.Action, error) {
+		return nil, ctx.Err()
+	})
+
+	actions, err := router.Route(ctx, routing.NewEvent("event"))
+	if actions != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected nil actions and cancellation, got %v, %v", actions, err)
+	}
+}

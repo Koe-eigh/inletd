@@ -47,15 +47,25 @@ func TestEventOptionalFields(t *testing.T) {
 }
 
 func TestEnrichedEventReachesFunctionalRouter(t *testing.T) {
-	event := routing.NewEvent("pull_request.opened", routing.WithSource("github"), routing.WithPayload([]byte(`{"number":42}`)))
-	router := routing.NewFunctionalRouter(func(_ context.Context, got routing.Event) ([]routing.Action, error) {
-		if got.Name() != event.Name() || got.Source() != event.Source() || !bytes.Equal(got.Payload(), event.Payload()) {
+	eventTime := time.Date(2026, time.October, 9, 12, 0, 0, 0, time.UTC)
+	event := routing.NewEvent("pull_request.opened",
+		routing.WithSource("github"),
+		routing.WithSourceEventID("delivery-42"),
+		routing.WithSourceEventTime(eventTime),
+		routing.WithPayload([]byte(`{"number":42}`)),
+	)
+	ctx := t.Context()
+	router := routing.NewFunctionalRouter(func(gotCtx context.Context, got routing.Event) ([]routing.Action, error) {
+		if gotCtx != ctx {
+			t.Fatal("router received a different context")
+		}
+		if got.Name() != event.Name() || got.Source() != event.Source() || got.SourceEventID() != event.SourceEventID() || !got.SourceEventTime().Equal(eventTime) || !bytes.Equal(got.Payload(), event.Payload()) {
 			t.Fatalf("router received a different event: %+v", got)
 		}
 		return []routing.Action{routing.NewAction("review")}, nil
 	})
 
-	actions, err := router.Route(t.Context(), event)
+	actions, err := router.Route(ctx, event)
 	if err != nil || len(actions) != 1 || actions[0].Name() != "review" {
 		t.Fatalf("unexpected routing result: %v, %v", actions, err)
 	}
