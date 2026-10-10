@@ -54,47 +54,9 @@ The overall mental model remains:
 
 **Events enter, routing decides, actions run.**
 
-### Event Envelopes
+### Event Envelopes and Adapter Contracts
 
-`routing.Event` carries a name, source identity, optional source event ID and
-time, and opaque payload bytes. Sources can construct one without introducing
-transport-specific types into the routing package:
-
-```go
-event := routing.NewEvent("pull_request.opened",
-    routing.WithSource("github"),
-    routing.WithSourceEventID("delivery-42"),
-    routing.WithPayload(message),
-)
-```
-
-`routing.NewEvent(name)` remains valid for events without source metadata.
-An empty source or source event ID and a zero source event time mean those values
-were not provided. `NewEvent` copies payload bytes when the option is applied,
-and `Payload()` returns a fresh copy. The same event can therefore be handed to
-the router and a later executor without either caller mutating its payload.
-
-Declarative routing uses only the event name to select actions. Source identity,
-source event ID, source event time, and payload do not change a declarative match.
-An unmatched event returns an empty action slice. The router only selects actions;
-the caller handles subscriptions and execution.
-
-### Source and Executor Contracts
-
-`daemon.Source` receives events with `Receive(ctx, deliver)`. It invokes the
-delivery callback synchronously, waiting for each call to finish before sending
-another event. This gives the caller a place to route and execute each event and
-provides backpressure to the source. `Receive` returns `nil` when the source
-finishes normally, or an error if the source fails. A delivery error stops intake
-and is returned to the caller; wrapping it is allowed if `errors.Is` still finds
-the original error. Cancellation stops intake and returns an error matching
-`ctx.Err()`. A source must not deliver events after `Receive` returns. The
-delivery callback should honor the same context so cancellation can interrupt
-in-progress handling.
-
-`daemon.ActionExecutor` runs `Execute(ctx, action, event)` for each selected
-action. It receives the entire event envelope, including source metadata and
-payload, so an action can use the same context the router inspected. Execution
-returns `nil` on success, an error on failure, and an error matching `ctx.Err()`
-on cancellation. Both contracts depend only on `context` and the routing types;
-transport subscriptions and workload processes belong in their adapters.
+Event sources pass transport-independent envelopes to the router, which selects
+trusted actions for an executor. See [Core Contracts](docs/contracts.md) for
+payload ownership, size limits, delivery, cancellation, error behavior, and a
+payload-aware routing example.
