@@ -1,0 +1,19 @@
+{
+  "sources": {
+    "alerts": {
+      "server_url": "https://ntfy.sh",
+      "topic": "my-inletd-topic"
+    }
+  },
+  "routes": {
+    "review.requested": ["review"]
+  },
+  "commands": {
+    "review": {
+      "executable": "/usr/bin/printf",
+      "argv": ["%s\\n", "Review requested"],
+      "working_directory": "/tmp",
+      "environment": {}
+    }
+  }
+}
