@@ -9,20 +9,16 @@ const (
 	DefaultTimeout       = 5 * time.Minute
 )
 
-// Config describes sources, event routes, and trusted local commands. Loading
-// does not validate relationships between these definitions.
-type Config struct {
-	Sources     map[string]NtfySource `json:"sources"`
-	Routes      map[string][]string   `json:"routes"`
-	Commands    map[string]Command    `json:"commands"`
-	Queue       QueueSettings         `json:"queue"`
-	Concurrency ConcurrencySettings   `json:"concurrency"`
-}
-
-type NtfySource struct {
-	ServerURL string `json:"server_url"`
-	Topic     string `json:"topic"`
-	TokenEnv  string `json:"token_env"`
+// Config describes sources, event routes, and trusted local commands. The
+// caller supplies the source schema when loading; config does not depend on a
+// particular transport. Loading does not validate relationships between these
+// definitions.
+type Config[Source any] struct {
+	Sources     map[string]Source   `json:"sources"`
+	Routes      map[string][]string `json:"routes"`
+	Commands    map[string]Command  `json:"commands"`
+	Queue       QueueSettings       `json:"queue"`
+	Concurrency ConcurrencySettings `json:"concurrency"`
 }
 
 // Command is defined only by local configuration, never by an incoming event.
@@ -44,14 +40,14 @@ type ConcurrencySettings struct {
 	Max *int `json:"max"`
 }
 
-func (c Config) EffectiveQueueCapacity() int {
+func (c Config[Source]) EffectiveQueueCapacity() int {
 	if c.Queue.Capacity != nil {
 		return *c.Queue.Capacity
 	}
 	return DefaultQueueCapacity
 }
 
-func (c Config) EffectiveMaxConcurrent() int {
+func (c Config[Source]) EffectiveMaxConcurrent() int {
 	if c.Concurrency.Max != nil {
 		return *c.Concurrency.Max
 	}

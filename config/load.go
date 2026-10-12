@@ -11,41 +11,42 @@ import (
 	"strings"
 )
 
-// Load reads one JSON configuration file. It rejects unknown fields and extra
-// JSON values, but leaves semantic validation to the caller.
-func Load(path string) (Config, error) {
+// Load reads one JSON configuration file using the caller's source schema. It
+// rejects unknown fields and extra JSON values, but leaves semantic validation
+// to the caller.
+func Load[Source any](path string) (Config[Source], error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Config{}, fmt.Errorf("read config %q: %w", path, err)
+		return Config[Source]{}, fmt.Errorf("read config %q: %w", path, err)
 	}
 
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
-		return Config{}, fmt.Errorf("parse config %q: expected a JSON object", path)
+		return Config[Source]{}, fmt.Errorf("parse config %q: expected a JSON object", path)
 	}
 
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	var cfg Config
+	var cfg Config[Source]
 	if err := decoder.Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("parse config %q: %w", path, describeJSONError(data, err))
+		return Config[Source]{}, fmt.Errorf("parse config %q: %w", path, describeJSONError(data, err))
 	}
 	var extra json.RawMessage
 	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
-			return Config{}, fmt.Errorf("parse config %q: multiple JSON values at byte %d", path, decoder.InputOffset())
+			return Config[Source]{}, fmt.Errorf("parse config %q: multiple JSON values at byte %d", path, decoder.InputOffset())
 		}
-		return Config{}, fmt.Errorf("parse config %q: %w", path, describeJSONError(data, err))
+		return Config[Source]{}, fmt.Errorf("parse config %q: %w", path, describeJSONError(data, err))
 	}
 	// encoding/json accepts null for non-pointer fields and silently supplies
 	// their zero values. No field in this schema uses null, so reject it rather
 	// than letting an explicit value look omitted.
 	var values any
 	if err := json.Unmarshal(data, &values); err != nil {
-		return Config{}, fmt.Errorf("parse config %q: invalid JSON", path)
+		return Config[Source]{}, fmt.Errorf("parse config %q: invalid JSON", path)
 	}
 	if field := nullField(values, ""); field != "" {
-		return Config{}, fmt.Errorf("parse config %q: null value for field %q", path, field)
+		return Config[Source]{}, fmt.Errorf("parse config %q: null value for field %q", path, field)
 	}
 	return cfg, nil
 }
