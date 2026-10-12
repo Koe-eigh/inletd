@@ -1,15 +1,15 @@
 # JSON configuration
 
-The local configuration file uses JSON. See [the minimal example](../config/example.json).
-At startup, the application selects the source schema when it calls
-`config.Load[ntfy.SourceConfig](path)`. The loader returns typed sources, routes,
-and local commands. Source names, command names, and event names are the keys
-in their respective objects. Each route lists command names to run for that event.
+The local configuration file uses JSON. See [the minimal example](../examples/config.json).
+At startup, the application calls `appconfig.Load(path)` to read typed sources,
+routes, and local commands. Source names, command names, and event names are the
+keys in their respective objects. Each route lists command names to run for that event.
 Executable paths and arguments live only in the local file; event payloads do
 not define commands.
 
-The shared configuration package does not import the ntfy package or define
-transport-specific fields.
+The application-facing loader combines the shared `config.Config` settings with
+`ntfy.SourceConfig`. The shared configuration package does not parse files or
+depend on a transport.
 
 Each ntfy source has `server_url`, `topic`, and an optional `token_env` name for
 a credential environment variable. A command has `executable`, optional `argv`,

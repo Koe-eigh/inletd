@@ -1,5 +1,4 @@
-// Package ntfy defines the ntfy source configuration. The application selects
-// this source schema when it loads a local configuration file.
+// Package ntfy defines configuration for the ntfy source adapter.
 package ntfy
 
 type SourceConfig struct {
