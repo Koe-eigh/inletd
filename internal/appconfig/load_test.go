@@ -98,6 +98,34 @@ func TestLoadErrors(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsDuplicateFields(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, field string
+	}{
+		{"root", `{"queue":{},"queue":{"capacity":3}}`, "queue"},
+		{"source name", `{"sources":{"alerts":{},"alerts":{"topic":"second"}}}`, "sources.alerts"},
+		{"command name", `{"commands":{"review":{},"review":{"executable":"/bin/false"}}}`, "commands.review"},
+		{"route name", `{"routes":{"event":[],"event":["review"]}}`, "routes.event"},
+		{"nested command field", `{"commands":{"review":{"executable":"first","executable":"second"}}}`, "commands.review.executable"},
+		{"escaped name", `{"commands":{"review":{},"re\u0076iew":{}}}`, "commands.review"},
+		{"environment", `{"commands":{"review":{"environment":{"MODE":"first","MODE":"second"}}}}`, "commands.review.environment.MODE"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeConfig(t, tc.input))
+			want := `duplicate field "` + tc.field + `"`
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("want %q, got %v", want, err)
+			}
+			if strings.Contains(err.Error(), "first") || strings.Contains(err.Error(), "second") {
+				t.Fatalf("error exposed a JSON value: %v", err)
+			}
+		})
+	}
+	if _, err := Load(writeConfig(t, `{"sources":{"alerts":{"topic":"one"},"other":{"topic":"two"}},"commands":{"review":{"environment":{"MODE":"one"}},"other":{"environment":{"MODE":"two"}}}}`)); err != nil {
+		t.Fatalf("same field in separate objects should be allowed: %v", err)
+	}
+}
+
 func TestLoadMissingFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.json")
 	_, err := Load(path)

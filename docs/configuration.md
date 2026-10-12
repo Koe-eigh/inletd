@@ -27,4 +27,5 @@ Call `EffectiveQueueCapacity`, `EffectiveMaxConcurrent`, or
 remain nil in the parsed structure; explicit zero and negative values remain
 available for subsequent validation. The loader rejects malformed JSON, extra
 JSON values, and unknown fields. Validation of names, limits, references, and
-credentials is handled by follow-up configuration work.
+credentials is handled by follow-up configuration work. Duplicate JSON field
+names, including source, route, and command names, are rejected during loading.

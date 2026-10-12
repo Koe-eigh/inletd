@@ -92,6 +92,9 @@ func Load(path string) (Config, error) {
 		}
 		return Config{}, fmt.Errorf("parse config %q: %w", path, describeJSONError(data, err))
 	}
+	if err := rejectDuplicateKeys(json.NewDecoder(bytes.NewReader(data)), ""); err != nil {
+		return Config{}, fmt.Errorf("parse config %q: %w", path, err)
+	}
 	// encoding/json accepts null for non-pointer fields and silently supplies
 	// their zero values. No field in this schema uses null, so reject it rather
 	// than letting an explicit value look omitted.
@@ -103,6 +106,49 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("parse config %q: null value for field %q", path, field)
 	}
 	return file.runtimeConfig(), nil
+}
+
+// rejectDuplicateKeys walks the original token stream because decoding into
+// maps discards earlier members with the same name.
+func rejectDuplicateKeys(decoder *json.Decoder, path string) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("invalid JSON")
+	}
+	switch token {
+	case json.Delim('{'):
+		seen := make(map[string]bool)
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return fmt.Errorf("invalid JSON")
+			}
+			key := keyToken.(string)
+			field := key
+			if path != "" {
+				field = path + "." + key
+			}
+			if seen[key] {
+				return fmt.Errorf("duplicate field %q", field)
+			}
+			seen[key] = true
+			if err := rejectDuplicateKeys(decoder, field); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token() // closing brace
+	case json.Delim('['):
+		for i := 0; decoder.More(); i++ {
+			if err := rejectDuplicateKeys(decoder, path+"["+strconv.Itoa(i)+"]"); err != nil {
+				return err
+			}
+		}
+		_, err = decoder.Token() // closing bracket
+	}
+	if err != nil {
+		return fmt.Errorf("invalid JSON")
+	}
+	return nil
 }
 
 func nullField(value any, path string) string {
