@@ -9,8 +9,6 @@ type Router interface {
 	Route(context.Context, Event) ([]Action, error)
 }
 
-// DeclarativeRouter selects actions by event name. Event metadata and payload
-// do not participate in matching.
 type DeclarativeRouter struct {
 	routeMap map[EventName][]Action
 }
