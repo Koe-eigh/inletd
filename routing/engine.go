@@ -10,11 +10,11 @@ type Router interface {
 }
 
 type DeclarativeRouter struct {
-	routeMap map[EventName][]Action
+	routeMap map[Event][]Action
 }
 
 func (router *DeclarativeRouter) Route(ctx context.Context, event Event) ([]Action, error) {
-	actions, found := router.routeMap[event.Name()]
+	actions, found := router.routeMap[event]
 	if !found {
 		return []Action{}, nil
 	}
@@ -22,13 +22,13 @@ func (router *DeclarativeRouter) Route(ctx context.Context, event Event) ([]Acti
 }
 
 func NewDeclarativeRouter(routeConfig map[string][]string) *DeclarativeRouter {
-	routeMap := make(map[EventName][]Action)
+	routeMap := make(map[Event][]Action)
 	for eventName, actionNames := range routeConfig {
 		actions := []Action{}
 		for _, actionName := range actionNames {
 			actions = append(actions, NewAction(actionName))
 		}
-		routeMap[EventName(eventName)] = actions
+		routeMap[NewEvent(eventName)] = actions
 	}
 
 	return &DeclarativeRouter{routeMap: routeMap}
