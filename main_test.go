@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -70,13 +71,47 @@ func TestFailedAgentRetries(t *testing.T) {
 	if len(r.State.Seen) != 0 {
 		t.Fatal("failed event marked seen")
 	}
-	r.Config.Rules[0].Command = []string{"sh", "-c", "cat > retried.txt"}
-	if err := r.Poll(context.Background(), false); err != nil {
+	restarted := &Runner{Config: c, Client: http.DefaultClient, Logger: r.Logger}
+	var err error
+	restarted.State, err = loadState(c.StateFile)
+	if err != nil || !restarted.State.Initialized || len(restarted.State.Seen) != 0 {
+		t.Fatalf("state after failed replay: %+v, %v", restarted.State, err)
+	}
+	restarted.Config.Rules[0].Command = []string{"sh", "-c", "cat > retried.txt"}
+	if err := restarted.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "retried.txt"))
 	if err != nil || strings.TrimSpace(string(b)) != "1" {
 		t.Fatalf("retry: %q, %v", b, err)
+	}
+}
+
+func TestStateWriteFailureDoesNotMarkEventSeenInMemory(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{event("1", "IssuesEvent", "opened", 1, "Old")}
+	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(events)
+	}))
+	statePath := filepath.Join(dir, "state.json")
+	c := Config{Repository: "acme/app", Workdir: dir, StateFile: statePath, APIURL: server, AgentTimeoutSec: 5,
+		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "cat > agent.txt"}, Prompt: "{number}"}}}
+	r := &Runner{Config: c, Client: http.DefaultClient, Logger: log.New(os.Stderr, "", 0)}
+	if err := r.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(statePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(statePath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	events = []Event{event("2", "IssuesEvent", "opened", 2, "New"), events[0]}
+	if err := r.Poll(context.Background(), false); err == nil {
+		t.Fatal("expected state write failure")
+	}
+	if slices.Contains(r.State.Seen, "2") {
+		t.Fatal("event marked seen after state write failure")
 	}
 }
 
