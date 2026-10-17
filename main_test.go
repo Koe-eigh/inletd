@@ -164,6 +164,67 @@ func TestCommentReviewRequestRequiresPRCommandAndAllowedActor(t *testing.T) {
 	}
 }
 
+func TestCommentImplementationRequestRequiresIssueCommandAndAllowedActor(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		commentEvent("1", "owner", "/inletd implement", true),
+		commentEvent("2", "stranger", "/inletd implement", false),
+		commentEvent("3", "owner", "please /inletd implement", false),
+		commentEvent("4", "OWNER", "  /inletd implement\n", false),
+	}
+	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(events)
+	}))
+	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
+		Rules: []Rule{{Event: "IssueCommentEvent", Actions: []string{"created"}, CommentCommand: "/inletd implement", CommentTarget: "issue", AllowedActors: []string{"owner"}, Command: []string{"sh", "-c", "cat >> prompt.txt"}, Prompt: "{requester} {repo} #{number} {url}"}}}
+	r := &Runner{Config: c, Client: http.DefaultClient, Logger: log.New(os.Stderr, "", 0)}
+	if err := r.Poll(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "prompt.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "OWNER acme/app #30 https://github.com/acme/app/issues/30" {
+		t.Fatalf("agent input or replay: %q", b)
+	}
+}
+
+func TestCommentTargetValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		rule    Rule
+		wantErr bool
+	}{
+		{"issue", Rule{Event: "IssueCommentEvent", CommentCommand: "/inletd implement", CommentTarget: "issue", AllowedActors: []string{"owner"}}, false},
+		{"legacy PR default", Rule{Event: "IssueCommentEvent", CommentCommand: "/inletd review", AllowedActors: []string{"owner"}}, false},
+		{"invalid target", Rule{Event: "IssueCommentEvent", CommentCommand: "/inletd implement", CommentTarget: "discussion", AllowedActors: []string{"owner"}}, true},
+		{"target without command", Rule{Event: "IssueCommentEvent", CommentTarget: "issue"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tc.rule.Command = []string{"echo"}
+			tc.rule.Prompt = "test"
+			config := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), Rules: []Rule{tc.rule}}
+			b, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "config.json")
+			if err := os.WriteFile(path, b, 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err = loadConfig(path)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("loadConfig error = %v, want error %t", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func commentEvent(id, actor, body string, pr bool) Event {
 	e := Event{ID: id, Type: "IssueCommentEvent"}
 	e.Repo.Name = "acme/app"

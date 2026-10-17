@@ -34,6 +34,7 @@ type Rule struct {
 	Command        []string `json:"command"`
 	Prompt         string   `json:"prompt"`
 	CommentCommand string   `json:"comment_command"`
+	CommentTarget  string   `json:"comment_target"`
 	AllowedActors  []string `json:"allowed_actors"`
 }
 
@@ -170,6 +171,12 @@ func loadConfig(path string) (Config, error) {
 		}
 		if rule.CommentCommand != "" && (rule.Event != "IssueCommentEvent" || len(rule.AllowedActors) == 0) {
 			return c, errors.New("comment_command requires IssueCommentEvent and allowed_actors")
+		}
+		if rule.CommentTarget != "" && rule.CommentCommand == "" {
+			return c, errors.New("comment_target requires comment_command")
+		}
+		if rule.CommentTarget != "" && rule.CommentTarget != "issue" && rule.CommentTarget != "pull_request" {
+			return c, errors.New("comment_target must be issue or pull_request")
 		}
 	}
 	return c, nil
@@ -351,10 +358,19 @@ func (r *Runner) dispatch(ctx context.Context, e Event) error {
 			continue
 		}
 		if rule.CommentCommand != "" {
-			if d.Action != "created" || d.Issue.PullRequest == nil || strings.TrimSpace(d.Comment.Body) != rule.CommentCommand || !containsFold(rule.AllowedActors, d.Comment.User.Login) {
+			if d.Action != "created" || number <= 0 || strings.TrimSpace(d.Comment.Body) != rule.CommentCommand || !containsFold(rule.AllowedActors, d.Comment.User.Login) {
 				continue
 			}
-			url = fmt.Sprintf("https://github.com/%s/pull/%d", e.Repo.Name, number)
+			target := rule.CommentTarget
+			if target == "" {
+				target = "pull_request"
+			}
+			if (target == "pull_request") != (d.Issue.PullRequest != nil) {
+				continue
+			}
+			if target == "pull_request" {
+				url = fmt.Sprintf("https://github.com/%s/pull/%d", e.Repo.Name, number)
+			}
 		}
 		values := strings.NewReplacer("{repo}", e.Repo.Name, "{event}", e.Type, "{action}", d.Action, "{number}", fmt.Sprint(number), "{url}", url, "{title}", title, "{requester}", d.Comment.User.Login)
 		prompt := values.Replace(rule.Prompt)
