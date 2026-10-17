@@ -29,30 +29,29 @@ Each rule has a GitHub event type (`event`), optional payload action allowlist (
 
 For a quick end-to-end test without invoking an AI agent, set a rule's command to `["sh", "-c", "cat > inletd-prompt.txt"]`, set `state_file` to a new path, and run with `-replay-existing -once` against a repository with a matching recent event. The prompt will appear in the configured working directory.
 
-### Test automatic PR review with inline comments
-
-The repository-specific [review example](inletd.review.example.json) watches newly opened PRs and asks Codex to submit a GitHub `COMMENT` review with comments on changed lines. It uses a separate state file from the general example. For this smoke test, if Codex finds no actionable issue, it posts a clearly labeled inline test comment on the first added line. This writes to the PR; use it only when you want that review posted.
-
-Start it **before creating the PR**. The first command records existing events, and the second keeps polling. Supply a GitHub token that can read the repository and write pull request reviews.
-
-```sh
-export GITHUB_TOKEN="$(gh auth token)"
-go run . -config inletd.review.example.json -once
-go run . -config inletd.review.example.json
-```
-
-Create the PR from another terminal or the GitHub UI. Watch for `dispatching PullRequestEvent opened #...` and the Codex output, then check the PR's Files changed or Conversation view for the review. Stop polling with Ctrl+C. The GitHub events feed can lag by 30 seconds to 6 hours, so a newly opened PR may take time to appear.
-
 ### Request a review on demand
 
-Use [inletd.request-review.example.json](inletd.request-review.example.json) to trigger a review by commenting `/inletd review` on a PR. Edit `allowed_actors` to list the GitHub logins that may request a review. Inletd requires the exact command in a new PR comment from an allowed actor; comments on ordinary issues do not trigger it. This mode does not review every newly opened PR.
+To request a review by commenting `/inletd review` on a PR, copy the generic example to your ignored `inletd.json` and replace its rules with this one. Set `allowed_actors` to the GitHub logins that may request a review:
+
+```json
+{
+  "event": "IssueCommentEvent",
+  "actions": ["created"],
+  "comment_command": "/inletd review",
+  "allowed_actors": ["YOUR_LOGIN"],
+  "command": ["codex", "exec", "--approve-for-me", "-"],
+  "prompt": "Review PR #{number} in {repo}: {url}. Inspect the current diff with gh. Do not edit files. Post one COMMENT review with concise inline comments on changed lines for actionable findings. Do not invent findings; if there are none, post a summary review without inline comments."
+}
+```
+
+Run Inletd once before posting the request to record existing events, then start polling:
 
 ```sh
 export GITHUB_TOKEN="$(gh auth token)"
-go run . -config inletd.request-review.example.json -once
-go run . -config inletd.request-review.example.json
+go run . -config inletd.json -once
+go run . -config inletd.json
 ```
 
-Run the first command before posting the request comment. The reviewer checks the PR's current head commit and can review again after new commits; it skips a duplicate review of the same commit. The separate state file keeps the on-demand cursor independent of the automatic review example. The request is detected through the Events API, so the same delivery delay applies.
+The command must match exactly, come from an allowed actor, and be posted on a PR rather than an issue. The request is detected through the Events API, so the same delivery delay applies. Stop polling with Ctrl+C.
 
 GitHub's repository events API is eventually consistent and returns at most the latest 300 events from the last 30 days. Inletd may miss events if the machine is offline while more than 300 events arrive, or if GitHub does not expose an event in this feed. It logs a warning when it reaches the 300-event limit. The MVP does not isolate concurrent changes made outside Inletd to the same working directory.
