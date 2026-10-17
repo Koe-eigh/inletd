@@ -1,0 +1,21 @@
+{
+  "repository": "OWNER/REPO",
+  "workdir": ".",
+  "state_file": ".inletd/state.json",
+  "poll_seconds": 60,
+  "agent_timeout_seconds": 1800,
+  "rules": [
+    {
+      "event": "IssuesEvent",
+      "actions": ["opened"],
+      "command": ["codex", "exec", "--approve-for-me", "-"],
+      "prompt": "Implement GitHub issue #{number} in {repo}. Read {url} and follow the repository instructions."
+    },
+    {
+      "event": "PullRequestEvent",
+      "actions": ["opened"],
+      "command": ["codex", "exec", "--approve-for-me", "-"],
+      "prompt": "Review pull request #{number} in {repo}. Read {url} and report actionable findings."
+    }
+  ]
+}
