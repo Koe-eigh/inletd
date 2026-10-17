@@ -164,6 +164,48 @@ func TestCommentReviewRequestRequiresPRCommandAndAllowedActor(t *testing.T) {
 	}
 }
 
+func TestPRReviewWorkflowDispatchesOpeningAndAuthorizedRequest(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		prEvent("1", "opened", 42),
+		prEvent("2", "reopened", 43),
+		prEvent("3", "closed", 44),
+		commentEvent("4", "stranger", "/inletd review", true),
+		commentEvent("5", "owner", "/inletd review", false),
+		commentEvent("6", "owner", "/inletd review", true),
+	}
+	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(events)
+	}))
+	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
+		Rules: []Rule{
+			{Event: "PullRequestEvent", Actions: []string{"opened", "reopened"}, Command: []string{"sh", "-c", "cat >> reviews.txt"}, Prompt: "{event} {action} #{number} {url}\n"},
+			{Event: "IssueCommentEvent", Actions: []string{"created"}, CommentCommand: "/inletd review", AllowedActors: []string{"owner"}, Command: []string{"sh", "-c", "cat >> reviews.txt"}, Prompt: "{requester} #{number} {url}\n"},
+		}}
+	r := &Runner{Config: c, Client: http.DefaultClient, Logger: log.New(os.Stderr, "", 0)}
+	if err := r.Poll(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "reviews.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "owner #30 https://github.com/acme/app/pull/30\nPullRequestEvent reopened #43 https://github.com/acme/app/pull/43\nPullRequestEvent opened #42 https://github.com/acme/app/pull/42\n"
+	if string(b) != want {
+		t.Fatalf("dispatches: %q, want %q", b, want)
+	}
+}
+
+func prEvent(id, action string, number int) Event {
+	e := Event{ID: id, Type: "PullRequestEvent"}
+	e.Repo.Name = "acme/app"
+	e.Payload, _ = json.Marshal(map[string]any{"action": action, "number": number, "pull_request": map[string]any{"number": number}})
+	return e
+}
+
 func commentEvent(id, actor, body string, pr bool) Event {
 	e := Event{ID: id, Type: "IssueCommentEvent"}
 	e.Repo.Name = "acme/app"
