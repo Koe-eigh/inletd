@@ -1,0 +1,23 @@
+{
+  "repository": "OWNER/REPO",
+  "workdir": ".",
+  "state_file": ".inletd/pr-review-state.json",
+  "poll_seconds": 60,
+  "agent_timeout_seconds": 1800,
+  "rules": [
+    {
+      "event": "PullRequestEvent",
+      "actions": ["opened", "reopened"],
+      "command": ["codex", "exec", "--approve-for-me", "-"],
+      "prompt": "Review PR #{number} in {repo}: {url}. Do not edit files. Fetch the current head SHA and diff with gh. Check existing PR reviews; if your GitHub account already posted an Inletd automated review for this PR and this exact SHA, stop without posting. Review only the current diff and add concise inline comments on valid changed lines for actionable findings. If there are no findings, write that in the review body without an inline comment. Verify the head SHA has not changed before posting. Submit one COMMENT review whose body includes 'Inletd automated review for PR #{number} at SHA <reviewed SHA>'. Report the review URL."
+    },
+    {
+      "event": "IssueCommentEvent",
+      "actions": ["created"],
+      "comment_command": "/inletd review",
+      "allowed_actors": ["YOUR_LOGIN"],
+      "command": ["codex", "exec", "--approve-for-me", "-"],
+      "prompt": "Review PR #{number} in {repo}: {url}. Requested by {requester}. Do not edit files. Fetch the current head SHA and diff with gh. Check existing PR reviews; if your GitHub account already posted an Inletd automated review for this PR and this exact SHA, stop without posting. Review only the current diff and add concise inline comments on valid changed lines for actionable findings. If there are no findings, write that in the review body without an inline comment. Verify the head SHA has not changed before posting. Submit one COMMENT review whose body includes 'Inletd automated review for PR #{number} at SHA <reviewed SHA>'. Report the review URL."
+    }
+  ]
+}
