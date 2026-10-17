@@ -29,10 +29,12 @@ type Config struct {
 }
 
 type Rule struct {
-	Event   string   `json:"event"`
-	Actions []string `json:"actions"`
-	Command []string `json:"command"`
-	Prompt  string   `json:"prompt"`
+	Event          string   `json:"event"`
+	Actions        []string `json:"actions"`
+	Command        []string `json:"command"`
+	Prompt         string   `json:"prompt"`
+	CommentCommand string   `json:"comment_command"`
+	AllowedActors  []string `json:"allowed_actors"`
 }
 
 type Event struct {
@@ -48,10 +50,17 @@ type details struct {
 	Action string `json:"action"`
 	Number int    `json:"number"`
 	Issue  struct {
-		Number  int    `json:"number"`
-		HTMLURL string `json:"html_url"`
-		Title   string `json:"title"`
+		Number      int              `json:"number"`
+		HTMLURL     string           `json:"html_url"`
+		Title       string           `json:"title"`
+		PullRequest *json.RawMessage `json:"pull_request"`
 	} `json:"issue"`
+	Comment struct {
+		Body string `json:"body"`
+		User struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	} `json:"comment"`
 	PullRequest struct {
 		Number  int    `json:"number"`
 		HTMLURL string `json:"html_url"`
@@ -158,6 +167,9 @@ func loadConfig(path string) (Config, error) {
 	for _, rule := range c.Rules {
 		if rule.Event == "" || len(rule.Command) == 0 || rule.Prompt == "" {
 			return c, errors.New("each rule needs event, command and prompt")
+		}
+		if rule.CommentCommand != "" && (rule.Event != "IssueCommentEvent" || len(rule.AllowedActors) == 0) {
+			return c, errors.New("comment_command requires IssueCommentEvent and allowed_actors")
 		}
 	}
 	return c, nil
@@ -334,11 +346,17 @@ func (r *Runner) dispatch(ctx context.Context, e Event) error {
 			url = fmt.Sprintf("https://github.com/%s/issues/%d", e.Repo.Name, number)
 		}
 	}
-	values := strings.NewReplacer("{repo}", e.Repo.Name, "{event}", e.Type, "{action}", d.Action, "{number}", fmt.Sprint(number), "{url}", url, "{title}", title)
 	for _, rule := range r.Config.Rules {
 		if rule.Event != e.Type || (len(rule.Actions) > 0 && !slices.Contains(rule.Actions, d.Action)) {
 			continue
 		}
+		if rule.CommentCommand != "" {
+			if d.Action != "created" || d.Issue.PullRequest == nil || strings.TrimSpace(d.Comment.Body) != rule.CommentCommand || !containsFold(rule.AllowedActors, d.Comment.User.Login) {
+				continue
+			}
+			url = fmt.Sprintf("https://github.com/%s/pull/%d", e.Repo.Name, number)
+		}
+		values := strings.NewReplacer("{repo}", e.Repo.Name, "{event}", e.Type, "{action}", d.Action, "{number}", fmt.Sprint(number), "{url}", url, "{title}", title, "{requester}", d.Comment.User.Login)
 		prompt := values.Replace(rule.Prompt)
 		args := make([]string, len(rule.Command))
 		for i, arg := range rule.Command {
@@ -358,4 +376,13 @@ func (r *Runner) dispatch(ctx context.Context, e Event) error {
 		return nil // first matching rule wins
 	}
 	return nil
+}
+
+func containsFold(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
 }

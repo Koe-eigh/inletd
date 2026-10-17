@@ -138,6 +138,43 @@ func TestSparsePullRequestEventGetsURL(t *testing.T) {
 	}
 }
 
+func TestCommentReviewRequestRequiresPRCommandAndAllowedActor(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		commentEvent("1", "Koe-eigh", "/inletd review", false),
+		commentEvent("2", "stranger", "/inletd review", true),
+		commentEvent("3", "Koe-eigh", "please /inletd review", true),
+		commentEvent("4", "koe-EIGH", "  /inletd review\n", true),
+	}
+	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(events)
+	}))
+	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
+		Rules: []Rule{{Event: "IssueCommentEvent", Actions: []string{"created"}, CommentCommand: "/inletd review", AllowedActors: []string{"Koe-eigh"}, Command: []string{"sh", "-c", "cat > prompt.txt"}, Prompt: "{requester} {url}"}}}
+	r := &Runner{Config: c, Client: http.DefaultClient, Logger: log.New(os.Stderr, "", 0)}
+	if err := r.Poll(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "prompt.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "koe-EIGH https://github.com/acme/app/pull/30" {
+		t.Fatalf("prompt: %q", b)
+	}
+}
+
+func commentEvent(id, actor, body string, pr bool) Event {
+	e := Event{ID: id, Type: "IssueCommentEvent"}
+	e.Repo.Name = "acme/app"
+	issue := map[string]any{"number": 30}
+	if pr {
+		issue["pull_request"] = map[string]any{"url": "https://api.github.com/repos/acme/app/pulls/30"}
+	}
+	e.Payload, _ = json.Marshal(map[string]any{"action": "created", "issue": issue, "comment": map[string]any{"body": body, "user": map[string]any{"login": actor}}})
+	return e
+}
+
 func event(id, kind, action string, number int, title string) Event {
 	e := Event{ID: id, Type: kind}
 	e.Repo.Name = "acme/app"

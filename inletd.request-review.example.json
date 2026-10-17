@@ -1,0 +1,17 @@
+{
+  "repository": "Koe-eigh/inletd",
+  "workdir": ".",
+  "state_file": ".inletd/request-review-state.json",
+  "poll_seconds": 60,
+  "agent_timeout_seconds": 1800,
+  "rules": [
+    {
+      "event": "IssueCommentEvent",
+      "actions": ["created"],
+      "comment_command": "/inletd review",
+      "allowed_actors": ["Koe-eigh"],
+      "command": ["codex", "exec", "--approve-for-me", "-"],
+      "prompt": "{requester} requested a review of GitHub pull request #{number} in {repo}: {url}. Use gh to inspect the PR and its current diff. Do not edit files. Before posting, compare the current head SHA with existing Inletd reviews; stop if one already covers this exact SHA. Submit one COMMENT review through the GitHub reviews API. Put concise actionable findings on valid changed lines using path, line, and side RIGHT. Do not invent findings. If there are no actionable findings, submit a review body saying so without an inline comment. Include 'Inletd automated review' and the reviewed head SHA in the review body. Report the review URL when finished."
+    }
+  ]
+}

@@ -25,7 +25,7 @@ go run . -config inletd.json
 
 Use `-once` to poll once and exit. On the first run, Inletd records the current events without running them. To intentionally process those events, use `-replay-existing -once` **before** the state file is initialized. Delete the state file only when you intentionally want to reset this history. The state file is written after every successfully handled event. A failed agent exits the current poll without marking its event as handled, so it is retried on the next poll. An event with no matching rule is marked handled.
 
-Each rule has a GitHub event type (`event`), optional payload action allowlist (`actions`), command argument array (`command`), and prompt (`prompt`). Supported replacements in the prompt and command arguments are `{repo}`, `{event}`, `{action}`, `{number}`, `{url}`, and `{title}`. For issue and pull request events, Inletd builds the GitHub URL from the repository and number when the event omits it; `{title}` can be empty. `{prompt}` in a command argument inserts the rendered prompt; standard input always receives the prompt as well. Rules are checked in order; the first match runs. For example, the included configuration dispatches newly opened issues and pull requests to Codex. Edit the command array to use another installed CLI.
+Each rule has a GitHub event type (`event`), optional payload action allowlist (`actions`), command argument array (`command`), and prompt (`prompt`). Supported replacements in the prompt and command arguments are `{repo}`, `{event}`, `{action}`, `{number}`, `{url}`, `{title}`, and `{requester}` for comment events. For issue and pull request events, Inletd builds the GitHub URL from the repository and number when the event omits it; `{title}` can be empty. `{prompt}` in a command argument inserts the rendered prompt; standard input always receives the prompt as well. Rules are checked in order; the first match runs. For example, the included configuration dispatches newly opened issues and pull requests to Codex. Edit the command array to use another installed CLI.
 
 For a quick end-to-end test without invoking an AI agent, set a rule's command to `["sh", "-c", "cat > inletd-prompt.txt"]`, set `state_file` to a new path, and run with `-replay-existing -once` against a repository with a matching recent event. The prompt will appear in the configured working directory.
 
@@ -42,5 +42,17 @@ go run . -config inletd.review.example.json
 ```
 
 Create the PR from another terminal or the GitHub UI. Watch for `dispatching PullRequestEvent opened #...` and the Codex output, then check the PR's Files changed or Conversation view for the review. Stop polling with Ctrl+C. The GitHub events feed can lag by 30 seconds to 6 hours, so a newly opened PR may take time to appear.
+
+### Request a review on demand
+
+Use [inletd.request-review.example.json](inletd.request-review.example.json) to trigger a review by commenting `/inletd review` on a PR. Edit `allowed_actors` to list the GitHub logins that may request a review. Inletd requires the exact command in a new PR comment from an allowed actor; comments on ordinary issues do not trigger it. This mode does not review every newly opened PR.
+
+```sh
+export GITHUB_TOKEN="$(gh auth token)"
+go run . -config inletd.request-review.example.json -once
+go run . -config inletd.request-review.example.json
+```
+
+Run the first command before posting the request comment. The reviewer checks the PR's current head commit and can review again after new commits; it skips a duplicate review of the same commit. The separate state file keeps the on-demand cursor independent of the automatic review example. The request is detected through the Events API, so the same delivery delay applies.
 
 GitHub's repository events API is eventually consistent and returns at most the latest 300 events from the last 30 days. Inletd may miss events if the machine is offline while more than 300 events arrive, or if GitHub does not expose an event in this feed. It logs a warning when it reaches the 300-event limit. The MVP does not isolate concurrent changes made outside Inletd to the same working directory.
