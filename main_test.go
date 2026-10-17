@@ -164,6 +164,41 @@ func TestCommentReviewRequestRequiresPRCommandAndAllowedActor(t *testing.T) {
 	}
 }
 
+func TestCommentFixRequestRetriesAfterAgentFailure(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{
+		commentEvent("1", "owner", "/inletd fix", false),
+		commentEvent("2", "stranger", "/inletd fix", true),
+		commentEvent("3", "owner", "/inletd fix", true),
+	}
+	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode(events)
+	}))
+	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
+		Rules: []Rule{{Event: "IssueCommentEvent", Actions: []string{"created"}, CommentCommand: "/inletd fix", AllowedActors: []string{"owner"}, Command: []string{"sh", "-c", "exit 7"}, Prompt: "Fix {url}"}}}
+	r := &Runner{Config: c, Client: http.DefaultClient, Logger: log.New(os.Stderr, "", 0)}
+	if err := r.Poll(context.Background(), true); err == nil {
+		t.Fatal("expected agent error")
+	}
+	if slices.Contains(r.State.Seen, "3") {
+		t.Fatal("failed request was marked seen")
+	}
+	r.Config.Rules[0].Command = []string{"sh", "-c", "cat >> fixed.txt"}
+	if err := r.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "fixed.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "Fix https://github.com/acme/app/pull/30" {
+		t.Fatalf("fix requests: %q", b)
+	}
+}
+
 func commentEvent(id, actor, body string, pr bool) Event {
 	e := Event{ID: id, Type: "IssueCommentEvent"}
 	e.Repo.Name = "acme/app"

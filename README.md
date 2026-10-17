@@ -54,4 +54,10 @@ go run . -config inletd.json
 
 The command must match exactly, come from an allowed actor, and be posted on a PR rather than an issue. The request is detected through the Events API, so the same delivery delay applies. Stop polling with Ctrl+C.
 
+### Address PR review feedback
+
+Copy `inletd.fix-review.example.json` to the ignored `inletd.json`, then set `repository`, `workdir`, and `allowed_actors`. Record existing events with `-once` before starting the poller as shown above. An allowed user can comment `/inletd fix` on a PR to ask the agent to inspect its review threads, make justified changes, run checks, push to the PR branch, and reply to the reviewers. The command does not run from issue comments or other users.
+
+Each new command comment is a separate request. A successfully handled event is recorded in the state file and skipped on later polls. If the agent command fails, the event remains pending and is retried on the next poll. Check the PR before posting the command again to avoid overlapping requests.
+
 GitHub's repository events API is eventually consistent and returns at most the latest 300 events from the last 30 days. Inletd may miss events if the machine is offline while more than 300 events arrive, or if GitHub does not expose an event in this feed. It logs a warning when it reaches the 300-event limit. The MVP does not isolate concurrent changes made outside Inletd to the same working directory.
