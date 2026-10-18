@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -45,7 +46,7 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 	}
 	for i := len(events) - 1; i >= 0; i-- {
 		e := events[i]
-		if e.ID == "" || e.Repo.Name != r.Config.Repository || slices.Contains(r.State.Seen, e.ID) {
+		if e.ID == "" || !strings.EqualFold(e.Repo.Name, r.Config.Repository) || slices.Contains(r.State.Seen, e.ID) {
 			continue
 		}
 		if err := r.dispatch(ctx, e); err != nil {
