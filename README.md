@@ -20,7 +20,7 @@ Requirements: Go 1.23 or later, a local checkout of the target repository, and a
 cp inletd.example.json inletd.json
 # Edit repository, workdir, and rules in inletd.json.
 export GITHUB_TOKEN="$(gh auth token)"
-go run . -config inletd.json
+go run ./src -config inletd.json
 ```
 
 Use `-once` to poll once and exit. On the first run, Inletd records the current events without running them. To intentionally process those events, use `-replay-existing -once` **before** the state file is initialized. Delete the state file only when you intentionally want to reset this history. The state file is written after every successfully handled event. A failed agent exits the current poll without marking its event as handled, so it is retried on the next poll. An event with no matching rule is marked handled.
@@ -37,8 +37,8 @@ Run Inletd once before posting the request to record existing events, then start
 
 ```sh
 export GITHUB_TOKEN="$(gh auth token)"
-go run . -config inletd.json -once
-go run . -config inletd.json
+go run ./src -config inletd.json -once
+go run ./src -config inletd.json
 ```
 
 The command must match exactly, come from an allowed actor, and be posted on a PR rather than an issue. After pushing new commits, comment `/inletd review` again to review the new head. GitHub's [repository Events API](https://docs.github.com/en/rest/using-the-rest-api/github-event-types#pullrequestevent) does not list a `synchronize` action for `PullRequestEvent`. The request is detected through the Events API, so the same delivery delay applies. Stop polling with Ctrl+C.
@@ -50,8 +50,8 @@ Copy `inletd.implement.example.json` to the ignored `inletd.json`. Set `reposito
 ```sh
 cp inletd.implement.example.json inletd.json
 export GITHUB_TOKEN="$(gh auth token)"
-go run . -config inletd.json -once
-go run . -config inletd.json
+go run ./src -config inletd.json -once
+go run ./src -config inletd.json
 ```
 
 An allowed user can then comment `/inletd implement` on an issue. The comment must contain exactly that command apart from surrounding whitespace. Comments on PRs and comments from other users do not start this workflow.
@@ -70,14 +70,14 @@ GitHub's repository events API is eventually consistent and returns at most the 
 
 ## Development checks
 
-The Go files keep each part of the polling workflow together: `config.go` loads and validates configuration, `github.go` fetches events, `state.go` persists handled IDs, `rules.go` selects a rule and extracts event values, `agent.go` renders and runs the command, and `runner.go` coordinates each poll. `main.go` contains the CLI loop. They remain in one package so the JSON examples and executable interface stay the same.
+The Go files live in `src/` and keep each part of the polling workflow together: `config.go` loads and validates configuration, `github.go` fetches events, `state.go` persists handled IDs, `rules.go` selects a rule and extracts event values, `agent.go` renders and runs the command, and `runner.go` coordinates each poll. `main.go` contains the CLI loop. They remain in one package; the JSON examples stay at the repository root.
 
 Run the same checks as GitHub Actions before opening a pull request:
 
 ```sh
 go test ./...
 go vet ./...
-go build ./...
+go build -o inletd ./src
 test -z "$(gofmt -l .)"
 ```
 
