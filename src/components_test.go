@@ -34,6 +34,30 @@ func TestExampleConfigsLoad(t *testing.T) {
 	}
 }
 
+func TestLoadConfigRejectsTrailingData(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		trailer string
+		wantErr bool
+	}{
+		{"whitespace", " \n\t", false},
+		{"second value", `{"rules":[]}`, true},
+		{"non-JSON data", " trailing", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			data := `{"repository":"acme/app","workdir":".","state_file":"state.json"}` + tc.trailer
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := loadConfig(path)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("loadConfig error = %v, want error %t", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestMatchRuleKeepsFirstEligibleRuleAndCorrectTarget(t *testing.T) {
 	rules := []Rule{
 		{Event: "IssueCommentEvent", CommentCommand: "/inletd review", AllowedActors: []string{"owner"}},
