@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,13 @@ func loadConfig(path string) (Config, error) {
 	d.DisallowUnknownFields()
 	if err := d.Decode(&c); err != nil {
 		return c, err
+	}
+	var trailing json.RawMessage
+	if err := d.Decode(&trailing); err != io.EOF {
+		if err != nil {
+			return c, fmt.Errorf("trailing data after config: %w", err)
+		}
+		return c, errors.New("trailing JSON value after config")
 	}
 	if c.Repository == "" || len(strings.Split(c.Repository, "/")) != 2 {
 		return c, errors.New("repository must be owner/name")
