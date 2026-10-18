@@ -67,3 +67,16 @@ Copy `inletd.fix-review.example.json` to the ignored `inletd.json`, then set `re
 Each new command comment is a separate request. A successfully handled event is recorded in the state file and skipped on later polls. If the agent command fails, the event remains pending and is retried on the next poll. Check the PR before posting the command again to avoid overlapping requests.
 
 GitHub's repository events API is eventually consistent and returns at most the latest 300 events from the last 30 days. Inletd may miss events if the machine is offline while more than 300 events arrive, or if GitHub does not expose an event in this feed. It logs a warning when it reaches the 300-event limit. The MVP does not isolate concurrent changes made outside Inletd to the same working directory.
+
+## Development checks
+
+Run the same checks as GitHub Actions before opening a pull request:
+
+```sh
+go test ./...
+go vet ./...
+go build ./...
+test -z "$(gofmt -l .)"
+```
+
+The formatting command fails if any Go file needs `gofmt`. GitHub Actions runs these checks on pull requests and pushes to `main` without a token for the app or access to live services.
