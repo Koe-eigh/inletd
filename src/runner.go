@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 )
@@ -55,6 +56,21 @@ func (r *Runner) setJob(id string, job Job, completed bool) error {
 }
 
 func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
+	if r.State.Initialized {
+		// Retry durable jobs even after their source events leave GitHub's feed.
+		ids := make([]string, 0, len(r.State.Jobs))
+		for id, job := range r.State.Jobs {
+			if job.Status == jobPending && job.Event != nil {
+				ids = append(ids, id)
+			}
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			if err := r.dispatchJob(ctx, *r.State.Jobs[id].Event, r.State.Jobs[id]); err != nil {
+				return err
+			}
+		}
+	}
 	events, err := r.fetch(ctx)
 	if err != nil {
 		return err
@@ -104,23 +120,24 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 		}
 		if rule != nil {
 			if !exists {
-				job = Job{Status: jobPending, EventType: e.Type, URL: values.url}
+				job = Job{Status: jobPending, EventType: e.Type, URL: values.url, Event: &e}
+				if err := r.setJob(e.ID, job, false); err != nil {
+					return err
+				}
+			} else if job.Event == nil {
+				// Jobs written by older versions can still use the live event.
+				job.Event = &e
 				if err := r.setJob(e.ID, job, false); err != nil {
 					return err
 				}
 			}
-			job.Status = jobRunning
-			if err := r.setJob(e.ID, job, false); err != nil {
+			if err := r.runJob(ctx, e, job, *rule, values); err != nil {
 				return err
 			}
-			if err := r.runAgent(ctx, e, *rule, values); err != nil {
-				return fmt.Errorf("event %s: %w (job remains running until reconciled)", e.ID, err)
-			}
-			job.Status = jobCompleted
-			if err := r.setJob(e.ID, job, true); err != nil {
-				return fmt.Errorf("event %s completed but could not persist completion: %w", e.ID, err)
-			}
 			continue
+		}
+		if exists && job.Status == jobPending {
+			return fmt.Errorf("event %s is pending but no longer matches a configured rule", e.ID)
 		}
 		next := r.State
 		next.Seen = append(slices.Clone(r.State.Seen), e.ID)
@@ -131,11 +148,43 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 			return err
 		}
 	}
+	for id, job := range r.State.Jobs {
+		if job.Status == jobPending && job.Event == nil {
+			return fmt.Errorf("event %s is pending without saved event data and is absent from the current feed; a new request is needed to retry it", id)
+		}
+	}
 	if len(events) == 0 {
 		if err := r.persist(r.State); err != nil {
 			return err
 		}
 	}
 	r.ETag = r.nextETag
+	return nil
+}
+
+func (r *Runner) dispatchJob(ctx context.Context, e Event, job Job) error {
+	rule, values, err := matchRule(e, r.Config.Rules)
+	if err != nil {
+		return fmt.Errorf("event %s: %w", e.ID, err)
+	}
+	if rule == nil {
+		return fmt.Errorf("event %s is pending but no longer matches a configured rule", e.ID)
+	}
+	return r.runJob(ctx, e, job, *rule, values)
+}
+
+func (r *Runner) runJob(ctx context.Context, e Event, job Job, rule Rule, values eventValues) error {
+	job.Status = jobRunning
+	if err := r.setJob(e.ID, job, false); err != nil {
+		return err
+	}
+	if err := r.runAgent(ctx, e, rule, values); err != nil {
+		return fmt.Errorf("event %s: %w (job remains running until reconciled)", e.ID, err)
+	}
+	job.Status = jobCompleted
+	job.Event = nil
+	if err := r.setJob(e.ID, job, true); err != nil {
+		return fmt.Errorf("event %s completed but could not persist completion: %w", e.ID, err)
+	}
 	return nil
 }

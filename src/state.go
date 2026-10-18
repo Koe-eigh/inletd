@@ -19,6 +19,7 @@ type Job struct {
 	Status    string `json:"status"`
 	EventType string `json:"event_type"`
 	URL       string `json:"url,omitempty"`
+	Event     *Event `json:"event,omitempty"`
 }
 
 const (
@@ -44,6 +45,7 @@ func (s State) resolveJob(id, resolution string) (State, error) {
 		job.Status = jobPending
 	} else {
 		job.Status = jobCompleted
+		job.Event = nil
 		next.Seen = append(slices.Clone(s.Seen), id)
 	}
 	next.Jobs[id] = job

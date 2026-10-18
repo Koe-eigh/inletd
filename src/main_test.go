@@ -123,6 +123,11 @@ func TestFailedAgentRequiresReconciliationBeforeRetry(t *testing.T) {
 	if err := saveState(c.StateFile, restarted.State); err != nil {
 		t.Fatal(err)
 	}
+	events = nil // The original event is no longer available from GitHub.
+	restarted.State, err = loadState(c.StateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := restarted.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
@@ -202,6 +207,14 @@ func TestRunningStateMustPersistBeforeAgentStarts(t *testing.T) {
 	state, err := loadState(c.StateFile)
 	if err != nil || state.Jobs["1"].Status != jobPending {
 		t.Fatalf("durable job: %+v, %v", state.Jobs["1"], err)
+	}
+	events = nil // A later poll must use the saved event even when the feed has moved on.
+	restarted := &Runner{Config: c, Client: http.DefaultClient, Logger: r.Logger, State: state}
+	if err := restarted.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "runs.txt")); err != nil {
+		t.Fatalf("pending job was not retried: %v", err)
 	}
 }
 
