@@ -20,7 +20,7 @@ func TestExampleConfigsLoad(t *testing.T) {
 		"inletd.fix-review.example.json",
 	} {
 		t.Run(path, func(t *testing.T) {
-			config, err := loadConfig(path)
+			config, err := loadConfig(filepath.Join("..", path))
 			if err != nil {
 				t.Fatal(err)
 			}
