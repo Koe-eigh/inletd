@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 )
@@ -18,19 +19,70 @@ type Runner struct {
 	PollInterval time.Duration
 	ETag         string
 	nextETag     string
+	save         func(string, State) error
+}
+
+func (r *Runner) persist(s State) error {
+	save := r.save
+	if save == nil {
+		save = saveState
+	}
+	if err := save(r.Config.StateFile, s); err != nil {
+		return err
+	}
+	r.State = s
+	return nil
+}
+
+func (r *Runner) setJob(id string, job Job, completed bool) error {
+	next := r.State
+	next.Jobs = make(map[string]Job, len(r.State.Jobs)+1)
+	for key, value := range r.State.Jobs {
+		next.Jobs[key] = value
+	}
+	next.Jobs[id] = job
+	if completed {
+		next.Seen = append(slices.Clone(r.State.Seen), id)
+		if len(next.Seen) > 1000 {
+			for _, old := range next.Seen[:len(next.Seen)-1000] {
+				if next.Jobs[old].Status == jobCompleted {
+					delete(next.Jobs, old)
+				}
+			}
+			next.Seen = next.Seen[len(next.Seen)-1000:]
+		}
+	}
+	return r.persist(next)
 }
 
 func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
+	if r.State.Initialized {
+		// Retry durable jobs even after their source events leave GitHub's feed.
+		ids := make([]string, 0, len(r.State.Jobs))
+		for id, job := range r.State.Jobs {
+			if job.Status == jobPending && job.Event != nil {
+				ids = append(ids, id)
+			}
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			if err := r.dispatchJob(ctx, *r.State.Jobs[id].Event, r.State.Jobs[id]); err != nil {
+				return err
+			}
+		}
+	}
 	events, err := r.fetch(ctx)
 	if err != nil {
 		return err
 	}
 	if !r.State.Initialized && !replayExisting {
+		next := r.State
+		next.Seen = slices.Clone(r.State.Seen)
 		for _, e := range events {
-			r.State.Seen = append(r.State.Seen, e.ID)
+			next.Seen = append(next.Seen, e.ID)
 		}
-		r.State.Initialized = true
-		if err := saveState(r.Config.StateFile, r.State); err != nil {
+		next.Initialized = true
+		if err := r.persist(next); err != nil {
 			return err
 		}
 		r.ETag = r.nextETag
@@ -38,9 +90,9 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 		return nil
 	}
 	if !r.State.Initialized {
-		r.State.Initialized = true
-		if err := saveState(r.Config.StateFile, r.State); err != nil {
-			r.State.Initialized = false
+		next := r.State
+		next.Initialized = true
+		if err := r.persist(next); err != nil {
 			return err
 		}
 	}
@@ -49,24 +101,90 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 		if e.ID == "" || !strings.EqualFold(e.Repo.Name, r.Config.Repository) || slices.Contains(r.State.Seen, e.ID) {
 			continue
 		}
-		if err := r.dispatch(ctx, e); err != nil {
+		job, exists := r.State.Jobs[e.ID]
+		if exists {
+			switch job.Status {
+			case jobCompleted:
+				continue
+			case jobRunning:
+				r.Logger.Printf("event %s may have completed; inspect %s and resolve the running job before retrying", e.ID, job.URL)
+				continue
+			case jobPending:
+			default:
+				return fmt.Errorf("event %s has unknown job status %q", e.ID, job.Status)
+			}
+		}
+		rule, values, err := matchRule(e, r.Config.Rules)
+		if err != nil {
 			return fmt.Errorf("event %s: %w", e.ID, err)
 		}
-		previousSeen := slices.Clone(r.State.Seen)
-		r.State.Seen = append(r.State.Seen, e.ID)
-		if len(r.State.Seen) > 1000 {
-			r.State.Seen = r.State.Seen[len(r.State.Seen)-1000:]
+		if rule != nil {
+			if !exists {
+				job = Job{Status: jobPending, EventType: e.Type, URL: values.url, Event: &e}
+				if err := r.setJob(e.ID, job, false); err != nil {
+					return err
+				}
+			} else if job.Event == nil {
+				// Jobs written by older versions can still use the live event.
+				job.Event = &e
+				if err := r.setJob(e.ID, job, false); err != nil {
+					return err
+				}
+			}
+			if err := r.runJob(ctx, e, job, *rule, values); err != nil {
+				return err
+			}
+			continue
 		}
-		if err := saveState(r.Config.StateFile, r.State); err != nil {
-			r.State.Seen = previousSeen
+		if exists && job.Status == jobPending {
+			return fmt.Errorf("event %s is pending but no longer matches a configured rule", e.ID)
+		}
+		next := r.State
+		next.Seen = append(slices.Clone(r.State.Seen), e.ID)
+		if len(next.Seen) > 1000 {
+			next.Seen = next.Seen[len(next.Seen)-1000:]
+		}
+		if err := r.persist(next); err != nil {
 			return err
 		}
 	}
+	for id, job := range r.State.Jobs {
+		if job.Status == jobPending && job.Event == nil {
+			return fmt.Errorf("event %s is pending without saved event data and is absent from the current feed; a new request is needed to retry it", id)
+		}
+	}
 	if len(events) == 0 {
-		if err := saveState(r.Config.StateFile, r.State); err != nil {
+		if err := r.persist(r.State); err != nil {
 			return err
 		}
 	}
 	r.ETag = r.nextETag
+	return nil
+}
+
+func (r *Runner) dispatchJob(ctx context.Context, e Event, job Job) error {
+	rule, values, err := matchRule(e, r.Config.Rules)
+	if err != nil {
+		return fmt.Errorf("event %s: %w", e.ID, err)
+	}
+	if rule == nil {
+		return fmt.Errorf("event %s is pending but no longer matches a configured rule", e.ID)
+	}
+	return r.runJob(ctx, e, job, *rule, values)
+}
+
+func (r *Runner) runJob(ctx context.Context, e Event, job Job, rule Rule, values eventValues) error {
+	job.Status = jobRunning
+	if err := r.setJob(e.ID, job, false); err != nil {
+		return err
+	}
+	if err := r.runAgent(ctx, e, rule, values); err != nil {
+		return fmt.Errorf("event %s: %w (job remains running until reconciled)", e.ID, err)
+	}
+	job.Status = jobCompleted
+	job.Event = nil
+	if err := r.setJob(e.ID, job, true); err != nil {
+		return fmt.Errorf("event %s completed but could not persist completion: %w", e.ID, err)
+	}
 	return nil
 }

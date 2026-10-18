@@ -3,13 +3,53 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 type State struct {
-	Initialized bool     `json:"initialized"`
-	Seen        []string `json:"seen"`
+	Initialized bool           `json:"initialized"`
+	Seen        []string       `json:"seen"`
+	Jobs        map[string]Job `json:"jobs,omitempty"`
+}
+
+type Job struct {
+	Status    string `json:"status"`
+	EventType string `json:"event_type"`
+	URL       string `json:"url,omitempty"`
+	Event     *Event `json:"event,omitempty"`
+}
+
+const (
+	jobPending   = "pending"
+	jobRunning   = "running"
+	jobCompleted = "completed"
+)
+
+func (s State) resolveJob(id, resolution string) (State, error) {
+	job, ok := s.Jobs[id]
+	if !ok || job.Status != jobRunning {
+		return s, fmt.Errorf("event %s is not a running job", id)
+	}
+	if resolution != jobCompleted && resolution != "retry" {
+		return s, errors.New("resolution must be completed or retry")
+	}
+	next := s
+	next.Jobs = make(map[string]Job, len(s.Jobs))
+	for key, value := range s.Jobs {
+		next.Jobs[key] = value
+	}
+	if resolution == "retry" {
+		job.Status = jobPending
+	} else {
+		job.Status = jobCompleted
+		job.Event = nil
+		next.Seen = append(slices.Clone(s.Seen), id)
+	}
+	next.Jobs[id] = job
+	return next, nil
 }
 
 func loadState(path string) (State, error) {
@@ -53,5 +93,13 @@ func saveState(path string, s State) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err := os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
