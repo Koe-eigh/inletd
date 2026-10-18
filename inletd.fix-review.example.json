@@ -1,0 +1,17 @@
+{
+  "repository": "OWNER/REPO",
+  "workdir": ".",
+  "state_file": ".inletd/fix-review-state.json",
+  "poll_seconds": 60,
+  "agent_timeout_seconds": 1800,
+  "rules": [
+    {
+      "event": "IssueCommentEvent",
+      "actions": ["created"],
+      "comment_command": "/inletd fix",
+      "allowed_actors": ["YOUR_LOGIN"],
+      "command": ["codex", "exec", "--approve-for-me", "-"],
+      "prompt": "Address review feedback on PR #{number} in {repo}: {url}. Requested by {requester}. Read the current PR, its review threads, and the repository instructions with gh. Work on the PR branch. Check each finding against the code, fix valid findings, run relevant checks, commit and push the changes, and reply to the review threads with the outcome. If a finding is invalid or cannot be verified, explain why in its thread. Do not force-push or merge the PR. Report the updated PR URL and any unresolved findings."
+    }
+  ]
+}
