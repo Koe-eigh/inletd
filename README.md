@@ -43,4 +43,21 @@ go run . -config inletd.json
 
 The command must match exactly, come from an allowed actor, and be posted on a PR rather than an issue. After pushing new commits, comment `/inletd review` again to review the new head. GitHub's [repository Events API](https://docs.github.com/en/rest/using-the-rest-api/github-event-types#pullrequestevent) does not list a `synchronize` action for `PullRequestEvent`. The request is detected through the Events API, so the same delivery delay applies. Stop polling with Ctrl+C.
 
+### Implement an issue on demand
+
+Copy `inletd.implement.example.json` to the ignored `inletd.json`. Set `repository`, `workdir`, and `allowed_actors` for your repository. Record existing events before starting the poller:
+
+```sh
+cp inletd.implement.example.json inletd.json
+export GITHUB_TOKEN="$(gh auth token)"
+go run . -config inletd.json -once
+go run . -config inletd.json
+```
+
+An allowed user can then comment `/inletd implement` on an issue. The comment must contain exactly that command apart from surrounding whitespace. Comments on PRs and comments from other users do not start this workflow.
+
+The example asks Codex to read the issue, work in the local checkout, run checks, and open a PR. The agent CLI must be installed and authenticated for GitHub writes through `gh`. Review the prompt and CLI permissions for your environment before starting Inletd. Each new command comment is a new request; an event already recorded in the state file is skipped on later polls. The example asks the agent to continue an existing PR for the same issue when possible.
+
+For comment rules, `comment_target` can be `issue` or `pull_request`. If omitted, it defaults to `pull_request` so existing review configurations keep working. `comment_command` requires `allowed_actors` and matches an exact comment from one of those accounts.
+
 GitHub's repository events API is eventually consistent and returns at most the latest 300 events from the last 30 days. Inletd may miss events if the machine is offline while more than 300 events arrive, or if GitHub does not expose an event in this feed. It logs a warning when it reaches the 300-event limit. The MVP does not isolate concurrent changes made outside Inletd to the same working directory.
