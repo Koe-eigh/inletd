@@ -87,7 +87,7 @@ func TestPollMatchesRepositoryCaseInsensitively(t *testing.T) {
 	}
 }
 
-func TestFailedAgentRetries(t *testing.T) {
+func TestFailedAgentRequiresReconciliationBeforeRetry(t *testing.T) {
 	dir := t.TempDir()
 	events := []Event{event("1", "IssuesEvent", "opened", 1, "Test")}
 	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { json.NewEncoder(w).Encode(events) }))
@@ -106,13 +106,102 @@ func TestFailedAgentRetries(t *testing.T) {
 	if err != nil || !restarted.State.Initialized || len(restarted.State.Seen) != 0 {
 		t.Fatalf("state after failed replay: %+v, %v", restarted.State, err)
 	}
+	if restarted.State.Jobs["1"].Status != jobRunning {
+		t.Fatalf("failed job status: %+v", restarted.State.Jobs["1"])
+	}
 	restarted.Config.Rules[0].Command = []string{"sh", "-c", "cat > retried.txt"}
+	if err := restarted.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "retried.txt")); !os.IsNotExist(err) {
+		t.Fatal("running job was retried without reconciliation")
+	}
+	restarted.State, err = restarted.State.resolveJob("1", "retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveState(c.StateFile, restarted.State); err != nil {
+		t.Fatal(err)
+	}
 	if err := restarted.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "retried.txt"))
 	if err != nil || strings.TrimSpace(string(b)) != "1" {
 		t.Fatalf("retry: %q, %v", b, err)
+	}
+}
+
+func TestCompletedAgentWithFailedStateWriteIsNotRepeated(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{event("1", "IssuesEvent", "opened", 1, "Test")}
+	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { json.NewEncoder(w).Encode(events) }))
+	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
+		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "echo run >> runs.txt"}, Prompt: "{number}"}}}
+	r := &Runner{Config: c, Client: http.DefaultClient, Logger: log.New(os.Stderr, "", 0)}
+	r.save = func(path string, state State) error {
+		if state.Jobs["1"].Status == jobCompleted {
+			return os.ErrPermission
+		}
+		return saveState(path, state)
+	}
+	if err := r.Poll(context.Background(), true); err == nil {
+		t.Fatal("expected completion write error")
+	}
+	if r.State.Jobs["1"].Status != jobRunning {
+		t.Fatalf("in-memory job: %+v", r.State.Jobs["1"])
+	}
+	restarted := &Runner{Config: c, Client: http.DefaultClient, Logger: r.Logger}
+	var err error
+	restarted.State, err = loadState(c.StateFile)
+	if err != nil || restarted.State.Jobs["1"].Status != jobRunning {
+		t.Fatalf("durable job: %+v, %v", restarted.State.Jobs["1"], err)
+	}
+	if err := restarted.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "runs.txt"))
+	if err != nil || string(data) != "run\n" {
+		t.Fatalf("agent executions: %q, %v", data, err)
+	}
+	restarted.State, err = restarted.State.resolveJob("1", jobCompleted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveState(c.StateFile, restarted.State); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	data, err = os.ReadFile(filepath.Join(dir, "runs.txt"))
+	if err != nil || string(data) != "run\n" {
+		t.Fatalf("agent repeated after resolution: %q, %v", data, err)
+	}
+}
+
+func TestRunningStateMustPersistBeforeAgentStarts(t *testing.T) {
+	dir := t.TempDir()
+	events := []Event{event("1", "IssuesEvent", "opened", 1, "Test")}
+	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { json.NewEncoder(w).Encode(events) }))
+	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
+		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "echo run > runs.txt"}, Prompt: "{number}"}}}
+	r := &Runner{Config: c, Client: http.DefaultClient, Logger: log.New(os.Stderr, "", 0)}
+	r.save = func(path string, state State) error {
+		if state.Jobs["1"].Status == jobRunning {
+			return os.ErrPermission
+		}
+		return saveState(path, state)
+	}
+	if err := r.Poll(context.Background(), true); err == nil {
+		t.Fatal("expected running state write error")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "runs.txt")); !os.IsNotExist(err) {
+		t.Fatal("agent started before running state was durable")
+	}
+	state, err := loadState(c.StateFile)
+	if err != nil || state.Jobs["1"].Status != jobPending {
+		t.Fatalf("durable job: %+v, %v", state.Jobs["1"], err)
 	}
 }
 
@@ -296,7 +385,7 @@ func TestCommentTargetValidation(t *testing.T) {
 	}
 }
 
-func TestCommentFixRequestRetriesAfterAgentFailure(t *testing.T) {
+func TestCommentFixRequestRetriesAfterReconciliation(t *testing.T) {
 	dir := t.TempDir()
 	events := []Event{
 		commentEvent("1", "owner", "/inletd fix", false),
@@ -316,6 +405,14 @@ func TestCommentFixRequestRetriesAfterAgentFailure(t *testing.T) {
 		t.Fatal("failed request was marked seen")
 	}
 	r.Config.Rules[0].Command = []string{"sh", "-c", "cat >> fixed.txt"}
+	var err error
+	r.State, err = r.State.resolveJob("3", "retry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveState(c.StateFile, r.State); err != nil {
+		t.Fatal(err)
+	}
 	if err := r.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}

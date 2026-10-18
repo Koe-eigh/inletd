@@ -9,14 +9,6 @@ import (
 	"time"
 )
 
-func (r *Runner) dispatch(ctx context.Context, e Event) error {
-	rule, values, err := matchRule(e, r.Config.Rules)
-	if err != nil || rule == nil {
-		return err
-	}
-	return r.runAgent(ctx, e, *rule, values)
-}
-
 func (r *Runner) runAgent(ctx context.Context, e Event, rule Rule, values eventValues) error {
 	replacements := strings.NewReplacer("{repo}", e.Repo.Name, "{event}", e.Type, "{action}", values.action, "{number}", fmt.Sprint(values.number), "{url}", values.url, "{title}", values.title, "{requester}", values.requester)
 	prompt := replacements.Replace(rule.Prompt)

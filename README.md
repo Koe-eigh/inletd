@@ -23,7 +23,17 @@ export GITHUB_TOKEN="$(gh auth token)"
 go run ./src -config inletd.json
 ```
 
-Use `-once` to poll once and exit. On the first run, Inletd records the current events without running them. To intentionally process those events, use `-replay-existing -once` **before** the state file is initialized. Delete the state file only when you intentionally want to reset this history. The state file is written after every successfully handled event. A failed agent exits the current poll without marking its event as handled, so it is retried on the next poll. An event with no matching rule is marked handled.
+Use `-once` to poll once and exit. On the first run, Inletd records the current events without running them. To intentionally process those events, use `-replay-existing -once` **before** the state file is initialized. Delete the state file only when you intentionally want to reset this history. An event with no matching rule is marked handled.
+
+For events it discovers, Inletd uses **at-least-once dispatch with manual reconciliation**: a pending job can run again, but a running job is held until an operator checks its effects. Progress on an uncertain job therefore requires operator action. Inletd cannot guarantee exactly-once effects from an external agent. For a matching event, the state file records a `pending` job, then a `running` job before starting the agent, and finally a `completed` job after success. A crash, agent error, or failed completion write can leave `running` even if the agent created a commit or PR. On restart, Inletd skips that event and logs its ID and target URL. Stop the poller, inspect the external result and the `jobs` entry in the state file, then reconcile it:
+
+```sh
+go run ./src -config inletd.json -resolve-event EVENT_ID -resolution completed
+# Only when the previous attempt had no effect, or its effects are safe to repeat:
+go run ./src -config inletd.json -resolve-event EVENT_ID -resolution retry
+```
+
+`completed` records the event as handled; `retry` makes it pending for the next poll. Check the target issue or PR and your working tree before choosing `retry`. The event ID is the GitHub Events API ID, not the issue or PR number. Existing state files with only `seen` IDs remain valid.
 
 Each rule has a GitHub event type (`event`), optional payload action allowlist (`actions`), command argument array (`command`), and prompt (`prompt`). Supported replacements in the prompt and command arguments are `{repo}`, `{event}`, `{action}`, `{number}`, `{url}`, `{title}`, and `{requester}` for comment events. For issue and pull request events, Inletd builds the GitHub URL from the repository and number when the event omits it; `{title}` can be empty. `{prompt}` in a command argument inserts the rendered prompt; standard input always receives the prompt as well. Rules are checked in order; the first match runs. For example, the included configuration dispatches newly opened issues and pull requests to Codex. Edit the command array to use another installed CLI.
 
@@ -64,7 +74,7 @@ For comment rules, `comment_target` can be `issue` or `pull_request`. If omitted
 
 Copy `inletd.fix-review.example.json` to the ignored `inletd.json`, then set `repository`, `workdir`, and `allowed_actors`. Record existing events with `-once` before starting the poller as shown above. An allowed user can comment `/inletd fix` on a PR to ask the agent to inspect its review threads, make justified changes, run checks, push to the PR branch, and reply to the reviewers. The command does not run from issue comments or other users.
 
-Each new command comment is a separate request. A successfully handled event is recorded in the state file and skipped on later polls. If the agent command fails, the event remains pending and is retried on the next poll. Check the PR before posting the command again to avoid overlapping requests.
+Each new command comment is a separate request. A successfully handled event is recorded in the state file and skipped on later polls. If the agent command fails, reconcile its `running` job as described above before another attempt. Check the PR before posting the command again to avoid overlapping requests.
 
 GitHub's repository events API is eventually consistent and returns at most the latest 300 events from the last 30 days. Inletd may miss events if the machine is offline while more than 300 events arrive, or if GitHub does not expose an event in this feed. It logs a warning when it reaches the 300-event limit. The MVP does not isolate concurrent changes made outside Inletd to the same working directory.
 

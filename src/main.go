@@ -13,7 +13,12 @@ func main() {
 	configPath := flag.String("config", "inletd.json", "configuration file")
 	once := flag.Bool("once", false, "poll once and exit")
 	replay := flag.Bool("replay-existing", false, "process current events on first run")
+	resolveEvent := flag.String("resolve-event", "", "event ID of a running job to reconcile")
+	resolution := flag.String("resolution", "", "completed or retry (requires -resolve-event)")
 	flag.Parse()
+	if (*resolveEvent == "") != (*resolution == "") {
+		log.Fatal("-resolve-event and -resolution must be used together")
+	}
 
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
@@ -24,8 +29,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if *resolveEvent != "" {
+		next, err := r.State.resolveJob(*resolveEvent, *resolution)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := saveState(cfg.StateFile, next); err != nil {
+			log.Fatal(err)
+		}
+		log.Printf("event %s resolved as %s", *resolveEvent, *resolution)
+		return
+	}
 	if *replay && r.State.Initialized {
 		log.Fatal("--replay-existing only applies before the state file is initialized")
+	}
+	for id, job := range r.State.Jobs {
+		if job.Status == jobRunning {
+			log.Printf("event %s has an unresolved running job (%s); inspect external effects before resolving it", id, job.URL)
+		}
 	}
 	for {
 		if err := r.Poll(context.Background(), *replay); err != nil {
