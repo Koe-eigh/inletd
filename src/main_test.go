@@ -58,6 +58,35 @@ func TestPollDispatchAndPersistence(t *testing.T) {
 	}
 }
 
+func TestPollMatchesRepositoryCaseInsensitively(t *testing.T) {
+	dir := t.TempDir()
+	matching := event("1", "IssuesEvent", "opened", 1, "Matching")
+	matching.Repo.Name = "Acme/App"
+	different := event("2", "IssuesEvent", "opened", 2, "Different")
+	different.Repo.Name = "acme/other"
+	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		json.NewEncoder(w).Encode([]Event{matching, different})
+	}))
+	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
+		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "cat >> agent.txt"}, Prompt: "{number}\n"}}}
+	r := &Runner{Config: c, Client: http.DefaultClient, Logger: log.New(os.Stderr, "", 0)}
+	for range 2 {
+		if err := r.Poll(context.Background(), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "agent.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "1\n" {
+		t.Fatalf("dispatched events: %q, want only the matching event once", b)
+	}
+	if !slices.Contains(r.State.Seen, matching.ID) || slices.Contains(r.State.Seen, different.ID) {
+		t.Fatalf("seen events: %v", r.State.Seen)
+	}
+}
+
 func TestFailedAgentRetries(t *testing.T) {
 	dir := t.TempDir()
 	events := []Event{event("1", "IssuesEvent", "opened", 1, "Test")}
