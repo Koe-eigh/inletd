@@ -70,6 +70,8 @@ GitHub's repository events API is eventually consistent and returns at most the 
 
 ## Development checks
 
+The Go files keep each part of the polling workflow together: `config.go` loads and validates configuration, `github.go` fetches events, `state.go` persists handled IDs, `rules.go` selects a rule and extracts event values, `agent.go` renders and runs the command, and `runner.go` coordinates each poll. `main.go` contains the CLI loop. They remain in one package so the JSON examples and executable interface stay the same.
+
 Run the same checks as GitHub Actions before opening a pull request:
 
 ```sh
