@@ -61,19 +61,19 @@ func TestLoadConfigRejectsTrailingData(t *testing.T) {
 func TestMatchRuleKeepsFirstEligibleRuleAndCorrectTarget(t *testing.T) {
 	rules := []Rule{
 		{Event: "IssueCommentEvent", CommentCommand: "/inletd review", AllowedActors: []string{"owner"}},
-		{Event: "IssueCommentEvent", CommentCommand: "/inletd implement", CommentTarget: "issue", AllowedActors: []string{"owner"}},
-		{Event: "IssueCommentEvent", CommentCommand: "/inletd implement", CommentTarget: "issue", AllowedActors: []string{"owner"}},
+		{Event: "IssueCommentEvent", CommentCommand: "/inletd implement", CommentTarget: "issue", AllowedActors: []string{"owner"}, Prompt: "first match"},
+		{Event: "IssueCommentEvent", CommentCommand: "/inletd implement", CommentTarget: "issue", AllowedActors: []string{"owner"}, Prompt: "later match"},
 	}
 	e := commentEvent("1", "OWNER", " /inletd implement\n", false)
-	rule, values, err := matchRule(e, rules)
+	spec, err := (DeclarativeRuleRouter{Rules: rules}).Route(e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rule != &rules[1] || values.number != 30 || values.url != "https://github.com/acme/app/issues/30" || values.requester != "OWNER" {
-		t.Fatalf("wrong match: rule=%p, values=%+v", rule, values)
+	if spec == nil || spec.Rule.Prompt != "first match" || spec.Values.number != 30 || spec.Values.url != "https://github.com/acme/app/issues/30" || spec.Values.requester != "OWNER" {
+		t.Fatalf("wrong match: %+v", spec)
 	}
 	e.Payload = json.RawMessage("{")
-	if _, _, err := matchRule(e, rules); err == nil {
+	if _, err := (DeclarativeRuleRouter{Rules: rules}).Route(e); err == nil {
 		t.Fatal("malformed payload was accepted")
 	}
 }

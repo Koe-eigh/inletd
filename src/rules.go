@@ -37,6 +37,19 @@ type eventValues struct {
 	requester string
 }
 
+// DeclarativeRuleRouter selects the first eligible configured rule.
+type DeclarativeRuleRouter struct {
+	Rules []Rule
+}
+
+func (r DeclarativeRuleRouter) Route(e Event) (*ExecutionSpec, error) {
+	rule, values, err := matchRule(e, r.Rules)
+	if err != nil || rule == nil {
+		return nil, err
+	}
+	return &ExecutionSpec{Rule: *rule, Values: values}, nil
+}
+
 func matchRule(e Event, rules []Rule) (*Rule, eventValues, error) {
 	var d details
 	if err := json.Unmarshal(e.Payload, &d); err != nil {

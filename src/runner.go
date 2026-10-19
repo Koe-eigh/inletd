@@ -15,6 +15,17 @@ type AgentRunner interface {
 	Run(context.Context, Event, Rule, eventValues) error
 }
 
+// ExecutionSpec describes the command and event values selected for an event.
+type ExecutionSpec struct {
+	Rule   Rule
+	Values eventValues
+}
+
+// Router maps a normalized event to an execution specification, or no match.
+type Router interface {
+	Route(Event) (*ExecutionSpec, error)
+}
+
 // EventBatch contains normalized events and source polling constraints.
 type EventBatch struct {
 	Events       []Event
@@ -32,6 +43,7 @@ type EventSource interface {
 type Runner struct {
 	Config       Config
 	Source       EventSource
+	Router       Router
 	AgentRunner  AgentRunner
 	Store        StateStore
 	State        State
@@ -160,13 +172,13 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 				return fmt.Errorf("event %s has unknown job status %q", e.ID, job.Status)
 			}
 		}
-		rule, values, err := matchRule(e, r.Config.Rules)
+		spec, err := r.route(e)
 		if err != nil {
-			return fmt.Errorf("event %s: %w", e.ID, err)
+			return err
 		}
-		if rule != nil {
+		if spec != nil {
 			if !exists {
-				job = Job{Status: jobPending, EventType: e.Type, URL: values.url, Event: &e}
+				job = Job{Status: jobPending, EventType: e.Type, URL: spec.Values.url, Event: &e}
 				if err := r.setJob(e.ID, job, false); err != nil {
 					return err
 				}
@@ -177,7 +189,7 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 					return err
 				}
 			}
-			if err := r.runJob(ctx, e, job, *rule, values); err != nil {
+			if err := r.runJob(ctx, e, job, spec.Rule, spec.Values); err != nil {
 				return err
 			}
 			continue
@@ -219,14 +231,25 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 }
 
 func (r *Runner) dispatchJob(ctx context.Context, e Event, job Job) error {
-	rule, values, err := matchRule(e, r.Config.Rules)
+	spec, err := r.route(e)
 	if err != nil {
-		return fmt.Errorf("event %s: %w", e.ID, err)
+		return err
 	}
-	if rule == nil {
+	if spec == nil {
 		return fmt.Errorf("event %s is pending but no longer matches a configured rule", e.ID)
 	}
-	return r.runJob(ctx, e, job, *rule, values)
+	return r.runJob(ctx, e, job, spec.Rule, spec.Values)
+}
+
+func (r *Runner) route(e Event) (*ExecutionSpec, error) {
+	if r.Router == nil {
+		return nil, fmt.Errorf("event %s: router is not configured", e.ID)
+	}
+	spec, err := r.Router.Route(e)
+	if err != nil {
+		return nil, fmt.Errorf("event %s: %w", e.ID, err)
+	}
+	return spec, nil
 }
 
 func (r *Runner) runJob(ctx context.Context, e Event, job Job, rule Rule, values eventValues) error {
