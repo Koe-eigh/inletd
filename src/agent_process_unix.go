@@ -13,13 +13,16 @@ func configureAgentProcess(cmd *exec.Cmd) error {
 	return nil
 }
 
-func signalAgentProcess(cmd *exec.Cmd, force bool) error {
+func signalAgentProcess(cmd *exec.Cmd, force bool) (bool, error) {
 	signal := syscall.SIGTERM
 	if force {
 		signal = syscall.SIGKILL
 	}
-	if err := syscall.Kill(-cmd.Process.Pid, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
-		return err
+	if err := syscall.Kill(-cmd.Process.Pid, signal); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			return false, nil
+		}
+		return true, err
 	}
-	return nil
+	return true, nil
 }

@@ -7,10 +7,40 @@ import (
 	"errors"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestAgentStopsBackgroundChildAfterLeaderExit(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		exitCode string
+		wantErr  bool
+	}{
+		{"success", "0", false},
+		{"failure", "7", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cmd := exec.Command("sh", "-c", "sh -c 'sleep 2; printf survived > marker' & exit "+tc.exitCode)
+			cmd.Dir = dir
+			err := runAgentCommand(context.Background(), cmd)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("runAgentCommand error = %v, want error = %t", err, tc.wantErr)
+			}
+			var exitErr *exec.ExitError
+			if tc.wantErr && (!errors.As(err, &exitErr) || exitErr.ExitCode() != 7) {
+				t.Fatalf("runAgentCommand error = %v, want exit status 7", err)
+			}
+			time.Sleep(2200 * time.Millisecond)
+			if _, err := os.Stat(filepath.Join(dir, "marker")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("background child survived leader exit: marker stat error = %v", err)
+			}
+		})
+	}
+}
 
 func TestAgentStopsDescendantsOnContextEnd(t *testing.T) {
 	for _, tc := range []struct {

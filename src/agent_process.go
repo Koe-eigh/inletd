@@ -25,21 +25,25 @@ func runAgentCommand(ctx context.Context, cmd *exec.Cmd) error {
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	waited := false
+	var commandErr error
 	select {
 	case err := <-done:
 		if ctx.Err() == nil {
-			return err
+			commandErr = err
 		}
 		waited = true
 	case <-ctx.Done():
 	}
 
-	// The leader can exit before its children. Keep the group alive through
-	// the grace period and send the final kill even if Wait has returned.
-	stopErr := signalAgentProcess(cmd, false)
-	timer := time.NewTimer(agentStopGrace)
-	<-timer.C
-	stopErr = errors.Join(stopErr, signalAgentProcess(cmd, true))
+	// The leader can exit before its children. Stop the group on every exit
+	// path, including a successful command and one that exits with an error.
+	remaining, stopErr := signalAgentProcess(cmd, false)
+	if remaining {
+		timer := time.NewTimer(agentStopGrace)
+		<-timer.C
+		_, forceErr := signalAgentProcess(cmd, true)
+		stopErr = errors.Join(stopErr, forceErr)
+	}
 	if !waited {
 		select {
 		case <-done:
@@ -47,5 +51,5 @@ func runAgentCommand(ctx context.Context, cmd *exec.Cmd) error {
 			stopErr = errors.Join(stopErr, errors.New("agent did not exit after forced termination"))
 		}
 	}
-	return errors.Join(ctx.Err(), stopErr)
+	return errors.Join(commandErr, ctx.Err(), stopErr)
 }
