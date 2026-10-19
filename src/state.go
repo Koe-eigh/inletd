@@ -12,6 +12,8 @@ import (
 type State struct {
 	Initialized bool           `json:"initialized"`
 	Seen        []string       `json:"seen"`
+	Cursor      string         `json:"cursor,omitempty"`
+	Gap         bool           `json:"gap,omitempty"`
 	Jobs        map[string]Job `json:"jobs,omitempty"`
 }
 

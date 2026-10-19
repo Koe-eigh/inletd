@@ -15,9 +15,13 @@ func main() {
 	replay := flag.Bool("replay-existing", false, "process current events on first run")
 	resolveEvent := flag.String("resolve-event", "", "event ID of a running job to reconcile")
 	resolution := flag.String("resolution", "", "completed or retry (requires -resolve-event)")
+	acknowledgeGap := flag.Bool("acknowledge-gap", false, "clear an event gap after checking for missed requests")
 	flag.Parse()
 	if (*resolveEvent == "") != (*resolution == "") {
 		log.Fatal("-resolve-event and -resolution must be used together")
+	}
+	if *acknowledgeGap && (*resolveEvent != "" || *replay) {
+		log.Fatal("-acknowledge-gap cannot be combined with -resolve-event or -replay-existing")
 	}
 
 	cfg, err := loadConfig(*configPath)
@@ -38,6 +42,17 @@ func main() {
 			log.Fatal(err)
 		}
 		log.Printf("event %s resolved as %s", *resolveEvent, *resolution)
+		return
+	}
+	if *acknowledgeGap {
+		if !r.State.Gap {
+			log.Fatal("no event gap to acknowledge")
+		}
+		r.State.Gap = false
+		if err := saveState(cfg.StateFile, r.State); err != nil {
+			log.Fatal(err)
+		}
+		log.Print("event gap acknowledged")
 		return
 	}
 	if *replay && r.State.Initialized {

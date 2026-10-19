@@ -70,9 +70,6 @@ func (r *Runner) fetch(ctx context.Context) ([]Event, error) {
 		if len(batch) < 100 {
 			break
 		}
-		if page == 3 {
-			r.Logger.Print("warning: 300 event limit reached; events may be missed")
-		}
 	}
 	return all, nil
 }
