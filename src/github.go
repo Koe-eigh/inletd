@@ -21,55 +21,75 @@ type Event struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-func (r *Runner) fetch(ctx context.Context) ([]Event, error) {
+// GitHubEventSource owns GitHub HTTP polling and its conditional request state.
+type GitHubEventSource struct {
+	config   Config
+	client   *http.Client
+	etag     string
+	nextETag string
+}
+
+func NewGitHubEventSource(config Config, client *http.Client) *GitHubEventSource {
+	return &GitHubEventSource{config: config, client: client}
+}
+
+func (s *GitHubEventSource) Commit() {
+	s.etag = s.nextETag
+}
+
+func (s *GitHubEventSource) Fetch(ctx context.Context) (EventBatch, error) {
+	var result EventBatch
+	s.nextETag = s.etag
 	var all []Event
 	for page := 1; page <= 3; page++ {
-		url := fmt.Sprintf("%s/repos/%s/events?per_page=100&page=%d", strings.TrimRight(r.Config.APIURL, "/"), r.Config.Repository, page)
+		url := fmt.Sprintf("%s/repos/%s/events?per_page=100&page=%d", strings.TrimRight(s.config.APIURL, "/"), s.config.Repository, page)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
-			return nil, err
+			return result, err
 		}
 		req.Header.Set("Accept", "application/vnd.github+json")
 		req.Header.Set("User-Agent", "inletd-mvp")
-		if page == 1 && r.ETag != "" {
-			req.Header.Set("If-None-Match", r.ETag)
+		if page == 1 && s.etag != "" {
+			req.Header.Set("If-None-Match", s.etag)
 		}
 		if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
-		resp, err := r.Client.Do(req)
+		resp, err := s.client.Do(req)
 		if err != nil {
-			return nil, err
+			return result, err
 		}
 		if seconds, err := strconv.Atoi(resp.Header.Get("X-Poll-Interval")); err == nil && seconds > 0 {
 			interval := time.Duration(seconds) * time.Second
-			if interval > r.PollInterval {
-				r.PollInterval = interval
+			if interval > result.PollInterval {
+				result.PollInterval = interval
 			}
 		}
 		if page == 1 {
 			if resp.StatusCode == http.StatusNotModified {
 				resp.Body.Close()
-				return nil, nil
+				return result, nil
 			}
-			r.nextETag = resp.Header.Get("ETag")
+			s.nextETag = resp.Header.Get("ETag")
 		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 		resp.Body.Close()
 		if err != nil {
-			return nil, err
+			return result, err
 		}
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("GitHub API %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+			return result, fmt.Errorf("GitHub API %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 		}
 		var batch []Event
 		if err := json.Unmarshal(body, &batch); err != nil {
-			return nil, err
+			return result, err
 		}
 		all = append(all, batch...)
 		if len(batch) < 100 {
 			break
 		}
 	}
-	return all, nil
+	result.Events = all
+	result.AtCapacity = len(all) == 300
+	return result, nil
 }
