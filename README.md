@@ -76,7 +76,13 @@ Copy `inletd.fix-review.example.json` to the ignored `inletd.json`, then set `re
 
 Each new command comment is a separate request. A successfully handled event is recorded in the state file and skipped on later polls. If the agent command fails, reconcile its `running` job as described above before another attempt. Check the PR before posting the command again to avoid overlapping requests.
 
-GitHub's repository events API is eventually consistent and returns at most the latest 300 events from the last 30 days. Inletd may miss events if the machine is offline while more than 300 events arrive, or if GitHub does not expose an event in this feed. It logs a warning when it reaches the 300-event limit. The MVP does not isolate concurrent changes made outside Inletd to the same working directory.
+GitHub's [repository Events API](https://docs.github.com/en/rest/activity/events) exposes at most 300 events created within the last 30 days. GitHub says event delivery can lag by 30 seconds to 6 hours. Inletd saves the newest event ID from each completed poll as a cursor. When a full 300-event window no longer contains that cursor, Inletd saves `"gap": true` in the state file and reports a poll error on every subsequent poll. It still processes visible events, but requests outside the window cannot be recovered from this API. Inspect issues, PRs, and comments posted since the last good poll; reissue any missed requests, then clear the alert with:
+
+```sh
+go run ./src -config inletd.json -acknowledge-gap
+```
+
+Run that command while the poller is stopped. The command acknowledges possible loss; it does not recover missing events. Existing state files gain a cursor on their next successful poll, so that first poll has no overlap check. A short feed with no cursor overlap cannot prove whether events aged out after 30 days, and GitHub may omit or delay events even when the cursor overlaps. The initial poll also cannot establish what happened before it started. Inletd therefore guarantees dispatch only for events it actually discovers, not reliable delivery of every GitHub action. The MVP does not isolate concurrent changes made outside Inletd to the same working directory.
 
 ## Development checks
 

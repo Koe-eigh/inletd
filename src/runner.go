@@ -82,12 +82,35 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 			next.Seen = append(next.Seen, e.ID)
 		}
 		next.Initialized = true
+		if len(events) > 0 {
+			next.Cursor = events[0].ID
+		}
 		if err := r.persist(next); err != nil {
 			return err
 		}
 		r.ETag = r.nextETag
 		r.Logger.Printf("initialized with %d existing events; waiting for new events", len(events))
 		return nil
+	}
+	// The cursor is the newest event from the last completed poll. If it has
+	// fallen out of a full feed, the API cannot show whether earlier requests
+	// were lost. Keep that uncertainty in durable state until acknowledged.
+	if r.State.Cursor != "" && len(events) == 300 {
+		found := false
+		for _, e := range events {
+			if e.ID == r.State.Cursor {
+				found = true
+				break
+			}
+		}
+		if !found && !r.State.Gap {
+			next := r.State
+			next.Gap = true
+			if err := r.persist(next); err != nil {
+				return err
+			}
+			r.Logger.Printf("event gap: cursor %s is outside the latest 300 events; earlier requests may be missing", r.State.Cursor)
+		}
 	}
 	if !r.State.Initialized {
 		next := r.State
@@ -158,7 +181,17 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 			return err
 		}
 	}
+	if len(events) > 0 && r.State.Cursor != events[0].ID {
+		next := r.State
+		next.Cursor = events[0].ID
+		if err := r.persist(next); err != nil {
+			return err
+		}
+	}
 	r.ETag = r.nextETag
+	if r.State.Gap {
+		return fmt.Errorf("event gap remains unresolved; inspect missed requests and run with -acknowledge-gap after recovery")
+	}
 	return nil
 }
 

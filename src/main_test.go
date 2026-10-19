@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -55,6 +56,86 @@ func TestPollDispatchAndPersistence(t *testing.T) {
 	}
 	if string(b) != "Implement acme/app issue #2: New https://example.test/issues/2" {
 		t.Fatalf("agent input: %q", b)
+	}
+}
+
+func TestPollRecordsGapAfterBurstExceedsEventWindow(t *testing.T) {
+	dir := t.TempDir()
+	old := event("1", "IssuesEvent", "opened", 1, "Old")
+	events := []Event{old}
+	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		page, _ := strconv.Atoi(req.URL.Query().Get("page"))
+		start := (page - 1) * 100
+		if start >= len(events) {
+			json.NewEncoder(w).Encode([]Event{})
+			return
+		}
+		end := min(start+100, len(events))
+		json.NewEncoder(w).Encode(events[start:end])
+	}))
+	statePath := filepath.Join(dir, "state.json")
+	c := Config{Repository: "acme/app", Workdir: dir, StateFile: statePath, APIURL: server, AgentTimeoutSec: 5,
+		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "cat >> dispatched.txt"}, Prompt: "{number}\n"}}}
+	r := &Runner{Config: c, Client: http.DefaultClient, Logger: log.New(os.Stderr, "", 0)}
+	if err := r.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if r.State.Cursor != "1" {
+		t.Fatalf("initial cursor: %q", r.State.Cursor)
+	}
+	// 301 newer events push the old cursor and request #2 outside the
+	// API's 300-event window. Request #302 is still visible.
+	for id := 302; id >= 2; id-- {
+		e := Event{ID: strconv.Itoa(id), Type: "PushEvent"}
+		e.Repo.Name = "acme/app"
+		if id == 2 || id == 302 {
+			e = event(strconv.Itoa(id), "IssuesEvent", "opened", id, "Request")
+		}
+		events = append(events, e)
+	}
+	events = events[1:]
+	if err := r.Poll(context.Background(), false); err == nil || !strings.Contains(err.Error(), "event gap") {
+		t.Fatalf("burst poll error = %v, want event gap", err)
+	}
+	if !r.State.Gap || r.State.Cursor != "302" {
+		t.Fatalf("state after burst: %+v", r.State)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "dispatched.txt"))
+	if err != nil || string(data) != "302\n" {
+		t.Fatalf("visible request dispatch = %q, %v", data, err)
+	}
+	restarted := &Runner{Config: c, Client: http.DefaultClient, Logger: r.Logger}
+	restarted.State, err = loadState(statePath)
+	if err != nil || !restarted.State.Gap {
+		t.Fatalf("durable gap = %+v, %v", restarted.State, err)
+	}
+	if err := restarted.Poll(context.Background(), false); err == nil || !strings.Contains(err.Error(), "event gap") {
+		t.Fatalf("restart poll error = %v, want unresolved gap", err)
+	}
+	data, err = os.ReadFile(filepath.Join(dir, "dispatched.txt"))
+	if err != nil || string(data) != "302\n" {
+		t.Fatalf("duplicate dispatch = %q, %v", data, err)
+	}
+}
+
+func TestFullEventWindowWithCursorDoesNotReportGap(t *testing.T) {
+	dir := t.TempDir()
+	events := make([]Event, 300)
+	for i := range events {
+		events[i] = Event{ID: strconv.Itoa(300 - i), Type: "PushEvent"}
+		events[i].Repo.Name = "acme/app"
+	}
+	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		page, _ := strconv.Atoi(req.URL.Query().Get("page"))
+		json.NewEncoder(w).Encode(events[(page-1)*100 : page*100])
+	}))
+	r := &Runner{Config: Config{Repository: "acme/app", StateFile: filepath.Join(dir, "state.json"), APIURL: server}, Client: http.DefaultClient, Logger: log.New(os.Stderr, "", 0),
+		State: State{Initialized: true, Cursor: "1"}}
+	if err := r.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if r.State.Gap || r.State.Cursor != "300" {
+		t.Fatalf("full overlapping window: %+v", r.State)
 	}
 }
 
