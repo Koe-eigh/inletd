@@ -33,4 +33,4 @@ Prompt and command arguments support `{repo}`, `{event}`, `{action}`, `{number}`
 
 For a quick test without an AI agent, set one rule's command to `["sh", "-c", "cat > inletd-prompt.txt"]`, set `state_file` to a new path, and run with `-replay-existing -once` against a repository with a matching recent event. The prompt appears in the configured working directory.
 
-See [Workflows](Workflows) for the included rules and [Event handling and recovery](Event-Handling-and-Recovery) before retrying a failed job.
+See [Workflows](Workflows.md) for the included rules and [Event handling and recovery](Event-Handling-and-Recovery.md) before retrying a failed job.

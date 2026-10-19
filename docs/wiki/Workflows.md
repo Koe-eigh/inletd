@@ -1,6 +1,6 @@
 # Workflows
 
-All rules below are in the single [inletd.example.json](https://github.com/Koe-eigh/inletd/blob/main/inletd.example.json). Copy it to `inletd.json` and follow [Getting started](Getting-Started) to set `repository`, `workdir`, and `allowed_actors` and start the poller. The command comments must match exactly apart from surrounding whitespace. Each new matching comment is a separate request; an event already recorded in state is skipped on later polls.
+All rules below are in the single [inletd.example.json](https://github.com/Koe-eigh/inletd/blob/main/inletd.example.json). Copy it to `inletd.json` and follow [Getting started](Getting-Started.md) to set `repository`, `workdir`, and `allowed_actors` and start the poller. The command comments must match exactly apart from surrounding whitespace. Each new matching comment is a separate request; an event already recorded in state is skipped on later polls.
 
 ## Automatic PR review
 

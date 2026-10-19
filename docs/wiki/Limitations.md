@@ -2,7 +2,7 @@
 
 ## Event delivery
 
-Inletd guarantees dispatch only for events it actually discovers. The GitHub Events API exposes at most 300 events from the last 30 days and may delay delivery by 30 seconds to 6 hours. A full 300-event window without the saved cursor raises a gap alert, but a shorter feed without overlap cannot prove whether events aged out after 30 days. GitHub may omit or delay events even when the cursor overlaps. The initial poll cannot establish what happened before it started. See [Event handling and recovery](Event-Handling-and-Recovery) for reconciliation and gap acknowledgment.
+Inletd guarantees dispatch only for events it actually discovers. The GitHub Events API exposes at most 300 events from the last 30 days and may delay delivery by 30 seconds to 6 hours. A full 300-event window without the saved cursor raises a gap alert, but a shorter feed without overlap cannot prove whether events aged out after 30 days. GitHub may omit or delay events even when the cursor overlaps. The initial poll cannot establish what happened before it started. See [Event handling and recovery](Event-Handling-and-Recovery.md) for reconciliation and gap acknowledgment.
 
 The MVP does not isolate concurrent changes made outside Inletd to the same working directory. Check the working tree and target issue or PR before retrying or submitting another command. An external agent may have produced effects before failing, so job state cannot guarantee exactly-once results.
 

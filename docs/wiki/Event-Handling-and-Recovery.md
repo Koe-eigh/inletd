@@ -24,4 +24,4 @@ Inspect issues, PRs, and comments since the last good poll. Reissue any missed r
 go run ./src -config inletd.json -acknowledge-gap
 ```
 
-Acknowledgment clears the alert; it does not recover missing events. Existing state files gain a cursor on their next successful poll, so that first poll has no overlap check. See [Limitations](Limitations) for other delivery constraints.
+Acknowledgment clears the alert; it does not recover missing events. Existing state files gain a cursor on their next successful poll, so that first poll has no overlap check. See [Limitations](Limitations.md) for other delivery constraints.
