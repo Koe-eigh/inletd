@@ -36,13 +36,13 @@ func TestRunJobWithInjectedAgentRunner(t *testing.T) {
 			rule := Rule{Command: []string{"missing-agent-binary"}, Prompt: "Issue {number}"}
 			values := eventValues{number: 42, title: "Fake"}
 			calls := 0
-			r := &Runner{Config: Config{StateFile: stateFile}, Logger: log.New(io.Discard, "", 0)}
+			r := &Runner{Config: Config{StateFile: stateFile}, Store: JSONFileStateStore{Path: stateFile}, Logger: log.New(io.Discard, "", 0)}
 			r.AgentRunner = fakeAgentRunner(func(ctx context.Context, gotEvent Event, gotRule Rule, gotValues eventValues) error {
 				calls++
 				if gotEvent.ID != e.ID || gotRule.Prompt != rule.Prompt || gotValues.number != values.number {
 					t.Fatalf("agent request: event=%+v, rule=%+v, values=%+v", gotEvent, gotRule, gotValues)
 				}
-				state, err := loadState(stateFile)
+				state, err := (JSONFileStateStore{Path: stateFile}).Load()
 				if err != nil || state.Jobs[e.ID].Status != jobRunning {
 					t.Fatalf("job was not running before agent call: state=%+v, err=%v", state, err)
 				}
@@ -67,7 +67,7 @@ func TestRunJobWithInjectedAgentRunner(t *testing.T) {
 			if tc.result != nil && (!strings.Contains(err.Error(), "agent failed") || !strings.Contains(err.Error(), "job remains running until reconciled")) {
 				t.Fatalf("runJob error lost context: %v", err)
 			}
-			state, err := loadState(stateFile)
+			state, err := (JSONFileStateStore{Path: stateFile}).Load()
 			if err != nil {
 				t.Fatal(err)
 			}

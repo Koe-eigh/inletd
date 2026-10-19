@@ -33,18 +33,17 @@ type Runner struct {
 	Config       Config
 	Source       EventSource
 	AgentRunner  AgentRunner
+	Store        StateStore
 	State        State
 	Logger       *log.Logger
 	PollInterval time.Duration
-	save         func(string, State) error
 }
 
 func (r *Runner) persist(s State) error {
-	save := r.save
-	if save == nil {
-		save = saveState
+	if r.Store == nil {
+		return fmt.Errorf("state store is not configured")
 	}
-	if err := save(r.Config.StateFile, s); err != nil {
+	if err := r.Store.Save(s); err != nil {
 		return err
 	}
 	r.State = s
