@@ -113,10 +113,9 @@ func TestFetchUsesETagAndPollInterval(t *testing.T) {
 
 func TestAgentRendersPromptIntoArgumentsAndStdin(t *testing.T) {
 	dir := t.TempDir()
-	r := &Runner{Config: Config{Workdir: dir, AgentTimeoutSec: 5}, Logger: log.New(os.Stderr, "", 0)}
-	e := event("1", "IssuesEvent", "opened", 1, "Title")
+	r := CommandAgentRunner{Config: Config{Workdir: dir, AgentTimeoutSec: 5}}
 	rule := Rule{Command: []string{"sh", "-c", "printf '%s\\n' \"$1\" > args.txt; cat > stdin.txt", "sh", "{prompt}"}, Prompt: "Issue {number}: {title}"}
-	if err := r.runAgent(context.Background(), e, rule, eventValues{number: 1, title: "Title"}); err != nil {
+	if err := r.Run(context.Background(), event("1", "IssuesEvent", "opened", 1, "Title"), rule, eventValues{number: 1, title: "Title"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"args.txt", "stdin.txt"} {
