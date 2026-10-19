@@ -71,6 +71,7 @@ func TestPollWithFakeEventSource(t *testing.T) {
 	r := &Runner{
 		Config: Config{Repository: "acme/app", Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}}}},
 		Store:  store,
+		Router: DeclarativeRuleRouter{Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}}}},
 		Source: source,
 		AgentRunner: fakeAgentRunner(func(_ context.Context, e Event, _ Rule, _ eventValues) error {
 			dispatched = append(dispatched, e.ID)
@@ -90,7 +91,7 @@ func TestPollWithFakeEventSource(t *testing.T) {
 	if len(dispatched) != 1 || dispatched[0] != "2" || r.State.Cursor != "3" || r.PollInterval != 2*time.Minute || source.commits != 2 {
 		t.Fatalf("new poll: dispatched=%v state=%+v interval=%s commits=%d", dispatched, r.State, r.PollInterval, source.commits)
 	}
-	restarted := &Runner{Config: r.Config, Store: store, Source: &fakeEventSource{batches: []EventBatch{{Events: []Event{otherRepo, newEvent, old}}}}, AgentRunner: r.AgentRunner, Logger: r.Logger}
+	restarted := &Runner{Config: r.Config, Router: r.Router, Store: store, Source: &fakeEventSource{batches: []EventBatch{{Events: []Event{otherRepo, newEvent, old}}}}, AgentRunner: r.AgentRunner, Logger: r.Logger}
 	var err error
 	restarted.State, err = store.Load()
 	if err != nil {
