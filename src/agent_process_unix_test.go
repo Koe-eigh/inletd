@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,11 +58,11 @@ func TestAgentStopsDescendantsOnContextEnd(t *testing.T) {
 				ctx, cancel = context.WithTimeout(ctx, 150*time.Millisecond)
 				defer cancel()
 			}
-			r := &Runner{Config: Config{Workdir: dir, AgentTimeoutSec: 5}, Logger: log.New(os.Stderr, "", 0)}
+			r := CommandAgentRunner{Config: Config{Workdir: dir, AgentTimeoutSec: 5}}
 			rule := Rule{Command: []string{"sh", "-c", "sh -c 'sleep 2; printf survived > marker' & printf ready > ready; wait"}, Prompt: "test"}
 			result := make(chan error, 1)
 			go func() {
-				result <- r.runAgent(ctx, Event{}, rule, eventValues{})
+				result <- r.Run(ctx, Event{}, rule, eventValues{})
 			}()
 			ready := filepath.Join(dir, "ready")
 			deadline := time.After(2 * time.Second)
@@ -101,11 +100,11 @@ func TestAgentForceStopsProcessIgnoringTERM(t *testing.T) {
 	dir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	r := &Runner{Config: Config{Workdir: dir, AgentTimeoutSec: 5}, Logger: log.New(os.Stderr, "", 0)}
+	r := CommandAgentRunner{Config: Config{Workdir: dir, AgentTimeoutSec: 5}}
 	rule := Rule{Command: []string{"sh", "-c", "trap '' TERM; printf ready > ready; while :; do sleep 1; done"}, Prompt: "test"}
 	result := make(chan error, 1)
 	go func() {
-		result <- r.runAgent(ctx, Event{}, rule, eventValues{})
+		result <- r.Run(ctx, Event{}, rule, eventValues{})
 	}()
 	deadline := time.After(2 * time.Second)
 	for {

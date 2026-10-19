@@ -11,9 +11,15 @@ import (
 	"time"
 )
 
+// AgentRunner executes a matched rule. The kernel owns job state around this call.
+type AgentRunner interface {
+	Run(context.Context, Event, Rule, eventValues) error
+}
+
 type Runner struct {
 	Config       Config
 	Client       *http.Client
+	AgentRunner  AgentRunner
 	State        State
 	Logger       *log.Logger
 	PollInterval time.Duration
@@ -207,11 +213,16 @@ func (r *Runner) dispatchJob(ctx context.Context, e Event, job Job) error {
 }
 
 func (r *Runner) runJob(ctx context.Context, e Event, job Job, rule Rule, values eventValues) error {
+	if r.AgentRunner == nil {
+		return fmt.Errorf("event %s: agent runner is not configured", e.ID)
+	}
 	job.Status = jobRunning
 	if err := r.setJob(e.ID, job, false); err != nil {
 		return err
 	}
-	if err := r.runAgent(ctx, e, rule, values); err != nil {
+	r.Logger.Printf("dispatching %s %s #%d (event %s)", e.Type, values.action, values.number, e.ID)
+	if err := r.AgentRunner.Run(ctx, e, rule, values); err != nil {
+		err = fmt.Errorf("agent failed: %w", err)
 		return fmt.Errorf("event %s: %w (job remains running until reconciled)", e.ID, err)
 	}
 	job.Status = jobCompleted

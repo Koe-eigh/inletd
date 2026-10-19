@@ -9,7 +9,12 @@ import (
 	"time"
 )
 
-func (r *Runner) runAgent(ctx context.Context, e Event, rule Rule, values eventValues) error {
+// CommandAgentRunner runs configured CLI commands with the rendered prompt on stdin.
+type CommandAgentRunner struct {
+	Config Config
+}
+
+func (r CommandAgentRunner) Run(ctx context.Context, e Event, rule Rule, values eventValues) error {
 	replacements := strings.NewReplacer("{repo}", e.Repo.Name, "{event}", e.Type, "{action}", values.action, "{number}", fmt.Sprint(values.number), "{url}", values.url, "{title}", values.title, "{requester}", values.requester)
 	prompt := replacements.Replace(rule.Prompt)
 	args := make([]string, len(rule.Command))
@@ -22,9 +27,5 @@ func (r *Runner) runAgent(ctx context.Context, e Event, rule Rule, values eventV
 	cmd.Dir = r.Config.Workdir
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	r.Logger.Printf("dispatching %s %s #%d (event %s)", e.Type, values.action, values.number, e.ID)
-	if err := runAgentCommand(cmdCtx, cmd); err != nil {
-		return fmt.Errorf("agent failed: %w", err)
-	}
-	return nil
+	return runAgentCommand(cmdCtx, cmd)
 }
