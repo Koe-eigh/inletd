@@ -96,18 +96,49 @@ func TestFetchUsesETagAndPollInterval(t *testing.T) {
 	defer server.Close()
 
 	dir := t.TempDir()
-	r := &Runner{Config: Config{Repository: "acme/app", APIURL: server.URL, StateFile: filepath.Join(dir, "state.json")}, Client: server.Client(), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: Config{Repository: "acme/app", APIURL: server.URL, StateFile: filepath.Join(dir, "state.json")}, Source: NewGitHubEventSource(Config{Repository: "acme/app", APIURL: server.URL}, server.Client()), Logger: log.New(os.Stderr, "", 0)}
 	if err := r.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
-	if r.ETag != `"current"` || r.PollInterval.Seconds() != 120 || len(r.State.Seen) != 1 {
-		t.Fatalf("first poll: ETag=%q interval=%s state=%+v", r.ETag, r.PollInterval, r.State)
+	if r.Source.(*GitHubEventSource).etag != `"current"` || r.PollInterval.Seconds() != 120 || len(r.State.Seen) != 1 {
+		t.Fatalf("first poll: ETag=%q interval=%s state=%+v", r.Source.(*GitHubEventSource).etag, r.PollInterval, r.State)
 	}
 	if err := r.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
 	if requests != 2 || len(r.State.Seen) != 1 {
 		t.Fatalf("conditional poll: requests=%d state=%+v", requests, r.State)
+	}
+}
+
+func TestGitHubEventSourceCommitsETagAfterHandling(t *testing.T) {
+	conditional := make(chan string, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conditional <- req.Header.Get("If-None-Match")
+		if req.Header.Get("If-None-Match") == `"current"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"current"`)
+		json.NewEncoder(w).Encode([]Event{event("1", "IssuesEvent", "opened", 1, "Title")})
+	}))
+	defer server.Close()
+
+	source := NewGitHubEventSource(Config{Repository: "acme/app", APIURL: server.URL}, server.Client())
+	for range 2 {
+		batch, err := source.Fetch(context.Background())
+		if err != nil || len(batch.Events) != 1 {
+			t.Fatalf("uncommitted fetch: batch=%+v, err=%v", batch, err)
+		}
+	}
+	source.Commit()
+	batch, err := source.Fetch(context.Background())
+	if err != nil || len(batch.Events) != 0 || source.etag != `"current"` {
+		t.Fatalf("conditional fetch: batch=%+v, etag=%q, err=%v", batch, source.etag, err)
+	}
+	headers := []string{<-conditional, <-conditional, <-conditional}
+	if headers[0] != "" || headers[1] != "" || headers[2] != `"current"` {
+		t.Fatalf("conditional headers: %v", headers)
 	}
 }
 

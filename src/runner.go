@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"slices"
 	"sort"
 	"strings"
@@ -16,15 +15,27 @@ type AgentRunner interface {
 	Run(context.Context, Event, Rule, eventValues) error
 }
 
+// EventBatch contains normalized events and source polling constraints.
+type EventBatch struct {
+	Events       []Event
+	PollInterval time.Duration
+	AtCapacity   bool
+}
+
+// EventSource fetches events and commits its polling checkpoint after the
+// kernel has durably handled the batch.
+type EventSource interface {
+	Fetch(context.Context) (EventBatch, error)
+	Commit()
+}
+
 type Runner struct {
 	Config       Config
-	Client       *http.Client
+	Source       EventSource
 	AgentRunner  AgentRunner
 	State        State
 	Logger       *log.Logger
 	PollInterval time.Duration
-	ETag         string
-	nextETag     string
 	save         func(string, State) error
 }
 
@@ -77,10 +88,17 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 			}
 		}
 	}
-	events, err := r.fetch(ctx)
+	if r.Source == nil {
+		return fmt.Errorf("event source is not configured")
+	}
+	batch, err := r.Source.Fetch(ctx)
+	if batch.PollInterval > r.PollInterval {
+		r.PollInterval = batch.PollInterval
+	}
 	if err != nil {
 		return err
 	}
+	events := batch.Events
 	if !r.State.Initialized && !replayExisting {
 		next := r.State
 		next.Seen = slices.Clone(r.State.Seen)
@@ -94,14 +112,14 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 		if err := r.persist(next); err != nil {
 			return err
 		}
-		r.ETag = r.nextETag
+		r.Source.Commit()
 		r.Logger.Printf("initialized with %d existing events; waiting for new events", len(events))
 		return nil
 	}
 	// The cursor is the newest event from the last completed poll. If it has
-	// fallen out of a full feed, the API cannot show whether earlier requests
+	// fallen out of a full feed, the source cannot show whether earlier requests
 	// were lost. Keep that uncertainty in durable state until acknowledged.
-	if r.State.Cursor != "" && len(events) == 300 {
+	if r.State.Cursor != "" && batch.AtCapacity {
 		found := false
 		for _, e := range events {
 			if e.ID == r.State.Cursor {
@@ -194,7 +212,7 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 			return err
 		}
 	}
-	r.ETag = r.nextETag
+	r.Source.Commit()
 	if r.State.Gap {
 		return fmt.Errorf("event gap remains unresolved; inspect missed requests and run with -acknowledge-gap after recovery")
 	}

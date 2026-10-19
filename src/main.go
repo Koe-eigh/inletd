@@ -30,7 +30,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	r := &Runner{Config: cfg, Client: &http.Client{Timeout: 20 * time.Second}, AgentRunner: CommandAgentRunner{Config: cfg}, Logger: log.Default()}
+	r := &Runner{Config: cfg, Source: NewGitHubEventSource(cfg, &http.Client{Timeout: 20 * time.Second}), AgentRunner: CommandAgentRunner{Config: cfg}, Logger: log.Default()}
 	r.State, err = loadState(cfg.StateFile)
 	if err != nil {
 		log.Fatal(err)
