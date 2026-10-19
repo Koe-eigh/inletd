@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -63,8 +65,16 @@ func main() {
 			log.Printf("event %s has an unresolved running job (%s); inspect external effects before resolving it", id, job.URL)
 		}
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	for {
-		if err := r.Poll(context.Background(), *replay); err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		if err := r.Poll(ctx, *replay); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			log.Printf("poll failed: %v", err)
 			if *once {
 				os.Exit(1)
@@ -78,6 +88,10 @@ func main() {
 		if r.PollInterval > interval {
 			interval = r.PollInterval
 		}
-		time.Sleep(interval)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(interval):
+		}
 	}
 }

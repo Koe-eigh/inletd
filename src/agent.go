@@ -18,12 +18,12 @@ func (r *Runner) runAgent(ctx context.Context, e Event, rule Rule, values eventV
 	}
 	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(r.Config.AgentTimeoutSec)*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(cmdCtx, args[0], args[1:]...)
+	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = r.Config.Workdir
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	r.Logger.Printf("dispatching %s %s #%d (event %s)", e.Type, values.action, values.number, e.ID)
-	if err := cmd.Run(); err != nil {
+	if err := runAgentCommand(cmdCtx, cmd); err != nil {
 		return fmt.Errorf("agent failed: %w", err)
 	}
 	return nil

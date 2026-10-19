@@ -39,6 +39,10 @@ Each rule has a GitHub event type (`event`), optional payload action allowlist (
 
 For a quick end-to-end test without invoking an AI agent, set a rule's command to `["sh", "-c", "cat > inletd-prompt.txt"]`, set `state_file` to a new path, and run with `-replay-existing -once` against a repository with a matching recent event. The prompt will appear in the configured working directory.
 
+### Agent shutdown
+
+Agent execution is supported on Linux and macOS. Inletd starts each agent command in a separate process group. When `agent_timeout_seconds` expires, or Inletd receives Ctrl+C or SIGTERM, it sends SIGTERM to the group, allows one second for cleanup, then sends SIGKILL and waits up to one more second for the agent to exit. A stopped command leaves its job in `running` state for manual reconciliation, since it may have made external changes before stopping. Other platforms reject agent execution because process tree cleanup is not implemented there. Abrupt termination of Inletd itself (such as SIGKILL or a machine crash) cannot run this cleanup.
+
 ### Review pull requests
 
 Copy `inletd.pr-review.example.json` to the ignored `inletd.json`. Set `repository`, `workdir`, and `allowed_actors` for your repository. It reviews newly opened and reopened PRs. An allowed user can also comment `/inletd review` on a PR to request a review of its current version. The example asks the agent to check the current head SHA and its own prior reviews before posting, so repeated requests for the same commit do not produce another review.
