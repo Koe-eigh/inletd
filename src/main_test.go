@@ -27,7 +27,7 @@ func TestPollDispatchAndPersistence(t *testing.T) {
 	// The shell is only a test agent. Production commands are launched without a shell.
 	config := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
 		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "cat >> agent.txt"}, Prompt: "Implement {repo} issue #{number}: {title} {url}"}}}
-	r := &Runner{Config: config, AgentRunner: CommandAgentRunner{Config: config}, Source: NewGitHubEventSource(config, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: config, Store: JSONFileStateStore{Path: config.StateFile}, AgentRunner: CommandAgentRunner{Config: config}, Source: NewGitHubEventSource(config, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
 	old := event("1", "IssuesEvent", "opened", 1, "Old")
 	events = []Event{old}
 	if err := r.Poll(context.Background(), false); err != nil {
@@ -41,9 +41,9 @@ func TestPollDispatchAndPersistence(t *testing.T) {
 	if err := r.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
-	r2 := &Runner{Config: config, AgentRunner: CommandAgentRunner{Config: config}, Source: NewGitHubEventSource(config, http.DefaultClient), Logger: r.Logger}
+	r2 := &Runner{Config: config, Store: JSONFileStateStore{Path: config.StateFile}, AgentRunner: CommandAgentRunner{Config: config}, Source: NewGitHubEventSource(config, http.DefaultClient), Logger: r.Logger}
 	var err error
-	r2.State, err = loadState(config.StateFile)
+	r2.State, err = (JSONFileStateStore{Path: config.StateFile}).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestPollRecordsGapAfterBurstExceedsEventWindow(t *testing.T) {
 	statePath := filepath.Join(dir, "state.json")
 	c := Config{Repository: "acme/app", Workdir: dir, StateFile: statePath, APIURL: server, AgentTimeoutSec: 5,
 		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "cat >> dispatched.txt"}, Prompt: "{number}\n"}}}
-	r := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
 	if err := r.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
@@ -104,8 +104,8 @@ func TestPollRecordsGapAfterBurstExceedsEventWindow(t *testing.T) {
 	if err != nil || string(data) != "302\n" {
 		t.Fatalf("visible request dispatch = %q, %v", data, err)
 	}
-	restarted := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: r.Logger}
-	restarted.State, err = loadState(statePath)
+	restarted := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: r.Logger}
+	restarted.State, err = (JSONFileStateStore{Path: statePath}).Load()
 	if err != nil || !restarted.State.Gap {
 		t.Fatalf("durable gap = %+v, %v", restarted.State, err)
 	}
@@ -129,7 +129,7 @@ func TestFullEventWindowWithCursorDoesNotReportGap(t *testing.T) {
 		page, _ := strconv.Atoi(req.URL.Query().Get("page"))
 		json.NewEncoder(w).Encode(events[(page-1)*100 : page*100])
 	}))
-	r := &Runner{Config: Config{Repository: "acme/app", StateFile: filepath.Join(dir, "state.json"), APIURL: server}, Source: NewGitHubEventSource(Config{Repository: "acme/app", APIURL: server}, http.DefaultClient), Logger: log.New(os.Stderr, "", 0),
+	r := &Runner{Config: Config{Repository: "acme/app", StateFile: filepath.Join(dir, "state.json"), APIURL: server}, Store: JSONFileStateStore{Path: filepath.Join(dir, "state.json")}, Source: NewGitHubEventSource(Config{Repository: "acme/app", APIURL: server}, http.DefaultClient), Logger: log.New(os.Stderr, "", 0),
 		State: State{Initialized: true, Cursor: "1"}}
 	if err := r.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestPollMatchesRepositoryCaseInsensitively(t *testing.T) {
 	}))
 	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
 		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "cat >> agent.txt"}, Prompt: "{number}\n"}}}
-	r := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
 	for range 2 {
 		if err := r.Poll(context.Background(), true); err != nil {
 			t.Fatal(err)
@@ -174,16 +174,16 @@ func TestFailedAgentRequiresReconciliationBeforeRetry(t *testing.T) {
 	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { json.NewEncoder(w).Encode(events) }))
 	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
 		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "exit 7"}, Prompt: "{number}"}}}
-	r := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
 	if err := r.Poll(context.Background(), true); err == nil {
 		t.Fatal("expected agent error")
 	}
 	if len(r.State.Seen) != 0 {
 		t.Fatal("failed event marked seen")
 	}
-	restarted := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: r.Logger}
+	restarted := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: r.Logger}
 	var err error
-	restarted.State, err = loadState(c.StateFile)
+	restarted.State, err = (JSONFileStateStore{Path: c.StateFile}).Load()
 	if err != nil || !restarted.State.Initialized || len(restarted.State.Seen) != 0 {
 		t.Fatalf("state after failed replay: %+v, %v", restarted.State, err)
 	}
@@ -201,11 +201,11 @@ func TestFailedAgentRequiresReconciliationBeforeRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := saveState(c.StateFile, restarted.State); err != nil {
+	if err := (JSONFileStateStore{Path: c.StateFile}).Save(restarted.State); err != nil {
 		t.Fatal(err)
 	}
 	events = nil // The original event is no longer available from GitHub.
-	restarted.State, err = loadState(c.StateFile)
+	restarted.State, err = (JSONFileStateStore{Path: c.StateFile}).Load()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,22 +224,22 @@ func TestCompletedAgentWithFailedStateWriteIsNotRepeated(t *testing.T) {
 	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { json.NewEncoder(w).Encode(events) }))
 	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
 		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "echo run >> runs.txt"}, Prompt: "{number}"}}}
-	r := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
-	r.save = func(path string, state State) error {
+	r := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r.Store = failingStateStore{base: r.Store, fail: func(state State) error {
 		if state.Jobs["1"].Status == jobCompleted {
 			return os.ErrPermission
 		}
-		return saveState(path, state)
-	}
+		return nil
+	}}
 	if err := r.Poll(context.Background(), true); err == nil {
 		t.Fatal("expected completion write error")
 	}
 	if r.State.Jobs["1"].Status != jobRunning {
 		t.Fatalf("in-memory job: %+v", r.State.Jobs["1"])
 	}
-	restarted := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: r.Logger}
+	restarted := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: r.Logger}
 	var err error
-	restarted.State, err = loadState(c.StateFile)
+	restarted.State, err = (JSONFileStateStore{Path: c.StateFile}).Load()
 	if err != nil || restarted.State.Jobs["1"].Status != jobRunning {
 		t.Fatalf("durable job: %+v, %v", restarted.State.Jobs["1"], err)
 	}
@@ -254,7 +254,7 @@ func TestCompletedAgentWithFailedStateWriteIsNotRepeated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := saveState(c.StateFile, restarted.State); err != nil {
+	if err := (JSONFileStateStore{Path: c.StateFile}).Save(restarted.State); err != nil {
 		t.Fatal(err)
 	}
 	if err := restarted.Poll(context.Background(), false); err != nil {
@@ -272,25 +272,25 @@ func TestRunningStateMustPersistBeforeAgentStarts(t *testing.T) {
 	server := testServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { json.NewEncoder(w).Encode(events) }))
 	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
 		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "echo run > runs.txt"}, Prompt: "{number}"}}}
-	r := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
-	r.save = func(path string, state State) error {
+	r := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r.Store = failingStateStore{base: r.Store, fail: func(state State) error {
 		if state.Jobs["1"].Status == jobRunning {
 			return os.ErrPermission
 		}
-		return saveState(path, state)
-	}
+		return nil
+	}}
 	if err := r.Poll(context.Background(), true); err == nil {
 		t.Fatal("expected running state write error")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "runs.txt")); !os.IsNotExist(err) {
 		t.Fatal("agent started before running state was durable")
 	}
-	state, err := loadState(c.StateFile)
+	state, err := (JSONFileStateStore{Path: c.StateFile}).Load()
 	if err != nil || state.Jobs["1"].Status != jobPending {
 		t.Fatalf("durable job: %+v, %v", state.Jobs["1"], err)
 	}
 	events = nil // A later poll must use the saved event even when the feed has moved on.
-	restarted := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: r.Logger, State: state}
+	restarted := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: r.Logger, State: state}
 	if err := restarted.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func TestStateWriteFailureDoesNotMarkEventSeenInMemory(t *testing.T) {
 	statePath := filepath.Join(dir, "state.json")
 	c := Config{Repository: "acme/app", Workdir: dir, StateFile: statePath, APIURL: server, AgentTimeoutSec: 5,
 		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "cat > agent.txt"}, Prompt: "{number}"}}}
-	r := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
 	if err := r.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestSparsePullRequestEventGetsURL(t *testing.T) {
 	}))
 	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
 		Rules: []Rule{{Event: "PullRequestEvent", Actions: []string{"opened"}, Command: []string{"sh", "-c", "cat > prompt.txt"}, Prompt: "{url}"}}}
-	r := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
 	if err := r.Poll(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestCommentReviewRequestRequiresPRCommandAndAllowedActor(t *testing.T) {
 	}))
 	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
 		Rules: []Rule{{Event: "IssueCommentEvent", Actions: []string{"created"}, CommentCommand: "/inletd review", AllowedActors: []string{"Koe-eigh"}, Command: []string{"sh", "-c", "cat > prompt.txt"}, Prompt: "{requester} {url}"}}}
-	r := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
 	if err := r.Poll(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +394,7 @@ func TestPRReviewWorkflowDispatchesOpeningAndAuthorizedRequest(t *testing.T) {
 			{Event: "PullRequestEvent", Actions: []string{"opened", "reopened"}, Command: []string{"sh", "-c", "cat >> reviews.txt"}, Prompt: "{event} {action} #{number} {url}\n"},
 			{Event: "IssueCommentEvent", Actions: []string{"created"}, CommentCommand: "/inletd review", AllowedActors: []string{"owner"}, Command: []string{"sh", "-c", "cat >> reviews.txt"}, Prompt: "{requester} #{number} {url}\n"},
 		}}
-	r := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
 	if err := r.Poll(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +431,7 @@ func TestCommentImplementationRequestRequiresIssueCommandAndAllowedActor(t *test
 	}))
 	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
 		Rules: []Rule{{Event: "IssueCommentEvent", Actions: []string{"created"}, CommentCommand: "/inletd implement", CommentTarget: "issue", AllowedActors: []string{"owner"}, Command: []string{"sh", "-c", "cat >> prompt.txt"}, Prompt: "{requester} {repo} #{number} {url}"}}}
-	r := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
 	if err := r.Poll(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +491,7 @@ func TestCommentFixRequestRetriesAfterReconciliation(t *testing.T) {
 	}))
 	c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 5,
 		Rules: []Rule{{Event: "IssueCommentEvent", Actions: []string{"created"}, CommentCommand: "/inletd fix", AllowedActors: []string{"owner"}, Command: []string{"sh", "-c", "exit 7"}, Prompt: "Fix {url}"}}}
-	r := &Runner{Config: c, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: c, Store: JSONFileStateStore{Path: c.StateFile}, AgentRunner: CommandAgentRunner{Config: c}, Source: NewGitHubEventSource(c, http.DefaultClient), Logger: log.New(os.Stderr, "", 0)}
 	if err := r.Poll(context.Background(), true); err == nil {
 		t.Fatal("expected agent error")
 	}
@@ -504,7 +504,7 @@ func TestCommentFixRequestRetriesAfterReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := saveState(c.StateFile, r.State); err != nil {
+	if err := (JSONFileStateStore{Path: c.StateFile}).Save(r.State); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Poll(context.Background(), false); err != nil {

@@ -90,7 +90,7 @@ Run that command while the poller is stopped. The command acknowledges possible 
 
 ## Development checks
 
-The Go files live in `src/` and keep each part of the polling workflow together: `config.go` loads and validates configuration, `github.go` polls GitHub through an `EventSource` driver, `state.go` persists handled IDs, `rules.go` selects a rule and extracts event values, `runner.go` coordinates each poll through injected `EventSource` and `AgentRunner` interfaces, and `agent.go` provides the command-based driver that renders and runs the CLI. `main.go` wires the drivers into the CLI loop. They remain in one package; the JSON examples stay at the repository root.
+The Go files live in `src/` and keep each part of the polling workflow together: `config.go` loads and validates configuration, `github.go` polls GitHub through an `EventSource` driver, `state.go` defines state transitions and the `StateStore` port, `state_file.go` provides the JSON file driver, `rules.go` selects a rule and extracts event values, `runner.go` coordinates each poll through injected `EventSource`, `AgentRunner`, and `StateStore` interfaces, and `agent.go` provides the command-based driver that renders and runs the CLI. `main.go` wires the drivers into the CLI loop. They remain in one package; the JSON examples stay at the repository root.
 
 Run the same checks as GitHub Actions before opening a pull request:
 

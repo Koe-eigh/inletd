@@ -96,7 +96,7 @@ func TestFetchUsesETagAndPollInterval(t *testing.T) {
 	defer server.Close()
 
 	dir := t.TempDir()
-	r := &Runner{Config: Config{Repository: "acme/app", APIURL: server.URL, StateFile: filepath.Join(dir, "state.json")}, Source: NewGitHubEventSource(Config{Repository: "acme/app", APIURL: server.URL}, server.Client()), Logger: log.New(os.Stderr, "", 0)}
+	r := &Runner{Config: Config{Repository: "acme/app", APIURL: server.URL, StateFile: filepath.Join(dir, "state.json")}, Store: JSONFileStateStore{Path: filepath.Join(dir, "state.json")}, Source: NewGitHubEventSource(Config{Repository: "acme/app", APIURL: server.URL}, server.Client()), Logger: log.New(os.Stderr, "", 0)}
 	if err := r.Poll(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}

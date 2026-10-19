@@ -30,8 +30,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	r := &Runner{Config: cfg, Source: NewGitHubEventSource(cfg, &http.Client{Timeout: 20 * time.Second}), AgentRunner: CommandAgentRunner{Config: cfg}, Logger: log.Default()}
-	r.State, err = loadState(cfg.StateFile)
+	r := &Runner{Config: cfg, Source: NewGitHubEventSource(cfg, &http.Client{Timeout: 20 * time.Second}), AgentRunner: CommandAgentRunner{Config: cfg}, Store: JSONFileStateStore{Path: cfg.StateFile}, Logger: log.Default()}
+	r.State, err = r.Store.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		if err := saveState(cfg.StateFile, next); err != nil {
+		if err := r.persist(next); err != nil {
 			log.Fatal(err)
 		}
 		log.Printf("event %s resolved as %s", *resolveEvent, *resolution)
@@ -50,8 +50,9 @@ func main() {
 		if !r.State.Gap {
 			log.Fatal("no event gap to acknowledge")
 		}
-		r.State.Gap = false
-		if err := saveState(cfg.StateFile, r.State); err != nil {
+		next := r.State
+		next.Gap = false
+		if err := r.persist(next); err != nil {
 			log.Fatal(err)
 		}
 		log.Print("event gap acknowledged")
