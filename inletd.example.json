@@ -6,16 +6,72 @@
   "agent_timeout_seconds": 1800,
   "rules": [
     {
-      "event": "IssuesEvent",
-      "actions": ["opened"],
-      "command": ["codex", "exec", "--approve-for-me", "-"],
-      "prompt": "Implement GitHub issue #{number} in {repo}. Read {url} and follow the repository instructions."
+      "event": "PullRequestEvent",
+      "actions": [
+        "opened",
+        "reopened"
+      ],
+      "command": [
+        "codex",
+        "exec",
+        "--approve-for-me",
+        "-"
+      ],
+      "prompt": "Review PR #{number} in {repo}: {url}. Do not edit files. Fetch the current head SHA and diff with gh. Check existing PR reviews; if your GitHub account already posted an Inletd automated review for this PR and this exact SHA, stop without posting. Review only the current diff and add concise inline comments on valid changed lines for actionable findings. If there are no findings, write that in the review body without an inline comment. Verify the head SHA has not changed before posting. Submit one COMMENT review whose body includes 'Inletd automated review for PR #{number} at SHA <reviewed SHA>'. Report the review URL."
     },
     {
-      "event": "PullRequestEvent",
-      "actions": ["opened"],
-      "command": ["codex", "exec", "--approve-for-me", "-"],
-      "prompt": "Review pull request #{number} in {repo}. Read {url} and report actionable findings."
+      "event": "IssueCommentEvent",
+      "actions": [
+        "created"
+      ],
+      "comment_command": "/inletd review",
+      "allowed_actors": [
+        "YOUR_LOGIN"
+      ],
+      "command": [
+        "codex",
+        "exec",
+        "--approve-for-me",
+        "-"
+      ],
+      "prompt": "Review PR #{number} in {repo}: {url}. Requested by {requester}. Do not edit files. Fetch the current head SHA and diff with gh. Check existing PR reviews; if your GitHub account already posted an Inletd automated review for this PR and this exact SHA, stop without posting. Review only the current diff and add concise inline comments on valid changed lines for actionable findings. If there are no findings, write that in the review body without an inline comment. Verify the head SHA has not changed before posting. Submit one COMMENT review whose body includes 'Inletd automated review for PR #{number} at SHA <reviewed SHA>'. Report the review URL.",
+      "comment_target": "pull_request"
+    },
+    {
+      "event": "IssueCommentEvent",
+      "actions": [
+        "created"
+      ],
+      "comment_command": "/inletd implement",
+      "comment_target": "issue",
+      "allowed_actors": [
+        "YOUR_LOGIN"
+      ],
+      "command": [
+        "codex",
+        "exec",
+        "--approve-for-me",
+        "-"
+      ],
+      "prompt": "Implement issue #{number} in {repo}: {url}. Requested by {requester}. Read the issue and repository instructions. Check for an existing open PR for this issue and continue that work if one exists. Otherwise create a branch from the current main branch. Implement the issue, run the project's checks, commit and push the change, and open a PR linking the issue. Report the PR URL."
+    },
+    {
+      "event": "IssueCommentEvent",
+      "actions": [
+        "created"
+      ],
+      "comment_command": "/inletd fix",
+      "allowed_actors": [
+        "YOUR_LOGIN"
+      ],
+      "command": [
+        "codex",
+        "exec",
+        "--approve-for-me",
+        "-"
+      ],
+      "prompt": "Address review feedback on PR #{number} in {repo}: {url}. Requested by {requester}. Read the current PR, its review threads, and the repository instructions with gh. Work on the PR branch. Check each finding against the code, fix valid findings, run relevant checks, commit and push the changes, and reply to the review threads with the outcome. If a finding is invalid or cannot be verified, explain why in its thread. Do not force-push or merge the PR. Report the updated PR URL and any unresolved findings.",
+      "comment_target": "pull_request"
     }
   ]
 }

@@ -13,25 +13,51 @@ import (
 )
 
 func TestExampleConfigsLoad(t *testing.T) {
-	for _, path := range []string{
-		"inletd.example.json",
-		"inletd.pr-review.example.json",
-		"inletd.implement.example.json",
-		"inletd.fix-review.example.json",
+	config, err := loadConfig(filepath.Join("..", "inletd.example.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(config.Workdir) || !filepath.IsAbs(config.StateFile) {
+		t.Fatalf("paths were not resolved: %+v", config)
+	}
+	if config.APIURL != "https://api.github.com" || config.PollSeconds < 60 || config.AgentTimeoutSec <= 0 {
+		t.Fatalf("defaults were not applied: %+v", config)
+	}
+	for _, tc := range []struct {
+		name    string
+		event   Event
+		command string
+	}{
+		{"automatic review", pullRequestEvent("opened"), ""},
+		{"requested review", commentEvent("1", "YOUR_LOGIN", "/inletd review", true), "/inletd review"},
+		{"issue implementation", commentEvent("2", "YOUR_LOGIN", "/inletd implement", false), "/inletd implement"},
+		{"review feedback", commentEvent("3", "YOUR_LOGIN", "/inletd fix", true), "/inletd fix"},
 	} {
-		t.Run(path, func(t *testing.T) {
-			config, err := loadConfig(filepath.Join("..", path))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !filepath.IsAbs(config.Workdir) || !filepath.IsAbs(config.StateFile) {
-				t.Fatalf("paths were not resolved: %+v", config)
-			}
-			if config.APIURL != "https://api.github.com" || config.PollSeconds < 60 || config.AgentTimeoutSec <= 0 {
-				t.Fatalf("defaults were not applied: %+v", config)
+		t.Run(tc.name, func(t *testing.T) {
+			spec, err := (DeclarativeRuleRouter{Rules: config.Rules}).Route(tc.event)
+			if err != nil || spec == nil || spec.Rule.CommentCommand != tc.command {
+				t.Fatalf("route = %+v, error = %v", spec, err)
 			}
 		})
 	}
+	for _, e := range []Event{
+		commentEvent("4", "OTHER_LOGIN", "/inletd review", true),
+		commentEvent("5", "YOUR_LOGIN", "/inletd review", false),
+		commentEvent("6", "YOUR_LOGIN", "/inletd implement", true),
+		commentEvent("7", "YOUR_LOGIN", "/inletd fix", false),
+	} {
+		spec, err := (DeclarativeRuleRouter{Rules: config.Rules}).Route(e)
+		if err != nil || spec != nil {
+			t.Fatalf("unexpected route for event %s: %+v, error = %v", e.ID, spec, err)
+		}
+	}
+}
+
+func pullRequestEvent(action string) Event {
+	e := Event{ID: "pr", Type: "PullRequestEvent"}
+	e.Repo.Name = "acme/app"
+	e.Payload, _ = json.Marshal(map[string]any{"action": action, "pull_request": map[string]any{"number": 30}})
+	return e
 }
 
 func TestLoadConfigRejectsTrailingData(t *testing.T) {
