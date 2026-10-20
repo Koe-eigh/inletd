@@ -12,12 +12,10 @@ It listens for remote events such as GitHub events, and automatically triggers l
 
 ## Documentation
 
-The guides are available in this repository while Wiki publication is pending.
-
-- [Getting started](docs/wiki/Getting-Started.md) ([Wiki](https://github.com/Koe-eigh/inletd/wiki/Getting-Started))
-- [Workflows](docs/wiki/Workflows.md) ([Wiki](https://github.com/Koe-eigh/inletd/wiki/Workflows))
-- [Event handling and recovery](docs/wiki/Event-Handling-and-Recovery.md) ([Wiki](https://github.com/Koe-eigh/inletd/wiki/Event-Handling-and-Recovery))
-- [Limitations](docs/wiki/Limitations.md) ([Wiki](https://github.com/Koe-eigh/inletd/wiki/Limitations))
+- [Getting started](https://github.com/Koe-eigh/inletd/wiki/Getting-Started)
+- [Workflows](https://github.com/Koe-eigh/inletd/wiki/Workflows)
+- [Event handling and recovery](https://github.com/Koe-eigh/inletd/wiki/Event-Handling-and-Recovery)
+- [Limitations](https://github.com/Koe-eigh/inletd/wiki/Limitations)
 
 ## Development checks
 
