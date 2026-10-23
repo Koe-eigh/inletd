@@ -13,8 +13,11 @@ import (
 )
 
 type Event struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
+	ID    string `json:"id"`
+	Type  string `json:"type"`
+	Actor struct {
+		Login string `json:"login"`
+	} `json:"actor"`
 	Repo struct {
 		Name string `json:"name"`
 	} `json:"repo"`

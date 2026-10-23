@@ -55,7 +55,7 @@ func matchRule(e Event, rules []Rule) (*Rule, eventValues, error) {
 	if err := json.Unmarshal(e.Payload, &d); err != nil {
 		return nil, eventValues{}, err
 	}
-	values := eventValues{action: d.Action, number: d.Issue.Number, url: d.Issue.HTMLURL, title: d.Issue.Title, requester: d.Comment.User.Login}
+	values := eventValues{action: d.Action, number: d.Issue.Number, url: d.Issue.HTMLURL, title: d.Issue.Title, requester: e.Actor.Login}
 	if e.Type == "PullRequestEvent" || e.Type == "PullRequestReviewEvent" {
 		values.number, values.url, values.title = d.PullRequest.Number, d.PullRequest.HTMLURL, d.PullRequest.Title
 	}
@@ -75,8 +75,16 @@ func matchRule(e Event, rules []Rule) (*Rule, eventValues, error) {
 		if rule.Event != e.Type || (len(rule.Actions) > 0 && !slices.Contains(rule.Actions, d.Action)) {
 			continue
 		}
+		if len(rule.AllowedActors) > 0 {
+			if values.requester == "" || !containsFold(rule.AllowedActors, values.requester) {
+				continue
+			}
+			if e.Type == "IssueCommentEvent" && (d.Comment.User.Login == "" || !strings.EqualFold(values.requester, d.Comment.User.Login)) {
+				continue
+			}
+		}
 		if rule.CommentCommand != "" {
-			if d.Action != "created" || values.number <= 0 || strings.TrimSpace(d.Comment.Body) != rule.CommentCommand || !containsFold(rule.AllowedActors, values.requester) {
+			if d.Action != "created" || values.number <= 0 || strings.TrimSpace(d.Comment.Body) != rule.CommentCommand {
 				continue
 			}
 			target := rule.CommentTarget
