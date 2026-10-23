@@ -25,6 +25,7 @@ const (
 	jobPending   = "pending"
 	jobRunning   = "running"
 	jobCompleted = "completed"
+	jobRejected  = "rejected"
 )
 
 // StateStore loads state and saves each transition durably before it is used.

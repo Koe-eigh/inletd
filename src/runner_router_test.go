@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -91,6 +92,69 @@ func TestPendingJobReplaysThroughRouter(t *testing.T) {
 			}
 			if calls != 1 {
 				t.Fatalf("router calls = %d, want 1", calls)
+			}
+		})
+	}
+}
+
+func TestLegacyPendingJobWithoutActorDoesNotBlockPolling(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		liveOldActor string
+		wantOldRun   bool
+	}{
+		{name: "actor recovered from live event", liveOldActor: "owner", wantOldRun: true},
+		{name: "event absent from feed"},
+		{name: "live actor is disallowed", liveOldActor: "outsider"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := commentEvent("old", "owner", "/run", false)
+			old.Actor.Login = "" // Events persisted by older versions had no actor field.
+			newEvent := commentEvent("new", "owner", "/run", false)
+			events := []Event{newEvent}
+			if tc.liveOldActor != "" {
+				liveOld := commentEvent("old", tc.liveOldActor, "/run", false)
+				events = append(events, liveOld)
+			}
+			source := &fakeEventSource{batches: []EventBatch{{Events: events}, {Events: []Event{commentEvent("old", "owner", "/run", false)}}}}
+			store := &memoryStateStore{}
+			rule := Rule{Event: "IssueCommentEvent", Actions: []string{"created"}, CommentCommand: "/run", CommentTarget: "issue", AllowedActors: []string{"owner"}}
+			ran := make([]string, 0, 2)
+			r := &Runner{
+				Config: Config{Repository: "acme/app", Rules: []Rule{rule}},
+				Source: source, Router: DeclarativeRuleRouter{Rules: []Rule{rule}}, Store: store,
+				AgentRunner: fakeAgentRunner(func(_ context.Context, e Event, _ Rule, _ eventValues) error {
+					if e.ID == "old" && store.state.Jobs["old"].Event.Actor.Login != "owner" {
+						t.Fatal("recovered actor was not persisted before the agent started")
+					}
+					ran = append(ran, e.ID)
+					return nil
+				}),
+				State:  State{Initialized: true, Jobs: map[string]Job{"old": {Status: jobPending, EventType: old.Type, Event: &old}}},
+				Logger: log.New(io.Discard, "", 0),
+			}
+			if err := r.Poll(context.Background(), false); err != nil {
+				t.Fatal(err)
+			}
+			wantStatus := jobRejected
+			if tc.wantOldRun {
+				wantStatus = jobCompleted
+			}
+			if r.State.Jobs["old"].Status != wantStatus || r.State.Jobs["new"].Status != jobCompleted || !slices.Contains(r.State.Seen, "old") {
+				t.Fatalf("state after upgrade = %+v", r.State)
+			}
+			if slices.Contains(ran, "old") != tc.wantOldRun || !slices.Contains(ran, "new") {
+				t.Fatalf("agent runs = %v", ran)
+			}
+			if err := r.Poll(context.Background(), false); err != nil {
+				t.Fatal(err)
+			}
+			wantRuns := 1
+			if tc.wantOldRun {
+				wantRuns++
+			}
+			if len(ran) != wantRuns {
+				t.Fatalf("job repeated after resolution: %v", ran)
 			}
 		})
 	}

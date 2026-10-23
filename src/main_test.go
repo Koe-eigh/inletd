@@ -413,6 +413,7 @@ func TestPRReviewWorkflowDispatchesOpeningAndAuthorizedRequest(t *testing.T) {
 
 func prEvent(id, action string, number int) Event {
 	e := Event{ID: id, Type: "PullRequestEvent"}
+	e.Actor.Login = "owner"
 	e.Repo.Name = "acme/app"
 	e.Payload, _ = json.Marshal(map[string]any{"action": action, "number": number, "pull_request": map[string]any{"number": number}})
 	return e
@@ -455,6 +456,9 @@ func TestCommentTargetValidation(t *testing.T) {
 	}{
 		{"issue", Rule{Event: "IssueCommentEvent", CommentCommand: "/inletd implement", CommentTarget: "issue", AllowedActors: []string{"owner"}}, false},
 		{"legacy PR default", Rule{Event: "IssueCommentEvent", CommentCommand: "/inletd review", AllowedActors: []string{"owner"}}, false},
+		{"allowlist without command", Rule{Event: "IssueCommentEvent", AllowedActors: []string{"owner"}}, false},
+		{"blank actor", Rule{Event: "IssueCommentEvent", AllowedActors: []string{""}}, true},
+		{"actor with whitespace", Rule{Event: "IssuesEvent", AllowedActors: []string{" owner"}}, true},
 		{"invalid target", Rule{Event: "IssueCommentEvent", CommentCommand: "/inletd implement", CommentTarget: "discussion", AllowedActors: []string{"owner"}}, true},
 		{"target without command", Rule{Event: "IssueCommentEvent", CommentTarget: "issue"}, true},
 	} {
@@ -524,6 +528,7 @@ func TestCommentFixRequestRetriesAfterReconciliation(t *testing.T) {
 
 func commentEvent(id, actor, body string, pr bool) Event {
 	e := Event{ID: id, Type: "IssueCommentEvent"}
+	e.Actor.Login = actor
 	e.Repo.Name = "acme/app"
 	issue := map[string]any{"number": 30}
 	if pr {
