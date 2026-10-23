@@ -33,3 +33,5 @@ For every rule, `allowed_actors` restricts execution to the listed GitHub logins
 | Other repository event types | The same top-level `actor.login`, if a rule is configured for that type. |
 
 GitHub defines the top-level actor as the user who triggered a repository event in its [Events API documentation](https://docs.github.com/en/rest/using-the-rest-api/github-event-types#event-object-common-properties). A missing top-level actor, or a missing or conflicting comment author on a restricted comment rule, makes the rule ineligible. Public rules remain eligible without actor data.
+
+Pending jobs saved by older versions do not include `actor.login`. On upgrade, Inletd checks the live event when it is still in GitHub's feed and runs the job only if that actor passes the current rule. If the actor cannot be verified, it marks the saved job `rejected`, never runs its agent, and continues polling. Inspect the logged event ID and submit a new request if the action is still needed.

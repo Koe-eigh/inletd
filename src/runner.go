@@ -62,18 +62,18 @@ func (r *Runner) persist(s State) error {
 	return nil
 }
 
-func (r *Runner) setJob(id string, job Job, completed bool) error {
+func (r *Runner) setJob(id string, job Job, seen bool) error {
 	next := r.State
 	next.Jobs = make(map[string]Job, len(r.State.Jobs)+1)
 	for key, value := range r.State.Jobs {
 		next.Jobs[key] = value
 	}
 	next.Jobs[id] = job
-	if completed {
+	if seen {
 		next.Seen = append(slices.Clone(r.State.Seen), id)
 		if len(next.Seen) > 1000 {
 			for _, old := range next.Seen[:len(next.Seen)-1000] {
-				if next.Jobs[old].Status == jobCompleted {
+				if next.Jobs[old].Status == jobCompleted || next.Jobs[old].Status == jobRejected {
 					delete(next.Jobs, old)
 				}
 			}
@@ -84,6 +84,7 @@ func (r *Runner) setJob(id string, job Job, completed bool) error {
 }
 
 func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
+	deferred := make(map[string]bool)
 	if r.State.Initialized {
 		// Retry durable jobs even after their source events leave GitHub's feed.
 		ids := make([]string, 0, len(r.State.Jobs))
@@ -94,7 +95,18 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 		}
 		sort.Strings(ids)
 		for _, id := range ids {
-			if err := r.dispatchJob(ctx, *r.State.Jobs[id].Event, r.State.Jobs[id]); err != nil {
+			job := r.State.Jobs[id]
+			if job.Event.Actor.Login == "" && hasRestrictedRule(r.Config.Rules, job.Event.Type) {
+				spec, err := r.route(*job.Event)
+				if err != nil {
+					return err
+				}
+				if spec == nil {
+					deferred[id] = true
+					continue
+				}
+			}
+			if err := r.dispatchJob(ctx, *job.Event, job); err != nil {
 				return err
 			}
 		}
@@ -162,7 +174,7 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 		job, exists := r.State.Jobs[e.ID]
 		if exists {
 			switch job.Status {
-			case jobCompleted:
+			case jobCompleted, jobRejected:
 				continue
 			case jobRunning:
 				r.Logger.Printf("event %s may have completed; inspect %s and resolve the running job before retrying", e.ID, job.URL)
@@ -182,8 +194,8 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 				if err := r.setJob(e.ID, job, false); err != nil {
 					return err
 				}
-			} else if job.Event == nil {
-				// Jobs written by older versions can still use the live event.
+			} else if job.Event == nil || job.Event.Actor.Login == "" && e.Actor.Login != "" {
+				// Restore actor data missing from jobs saved by older versions.
 				job.Event = &e
 				if err := r.setJob(e.ID, job, false); err != nil {
 					return err
@@ -195,6 +207,9 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 			continue
 		}
 		if exists && job.Status == jobPending {
+			if deferred[e.ID] {
+				continue
+			}
 			return fmt.Errorf("event %s is pending but no longer matches a configured rule", e.ID)
 		}
 		next := r.State
@@ -205,6 +220,23 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 		if err := r.persist(next); err != nil {
 			return err
 		}
+	}
+	deferredIDs := make([]string, 0, len(deferred))
+	for id := range deferred {
+		deferredIDs = append(deferredIDs, id)
+	}
+	sort.Strings(deferredIDs)
+	for _, id := range deferredIDs {
+		job := r.State.Jobs[id]
+		if job.Status != jobPending {
+			continue
+		}
+		job.Status = jobRejected
+		job.Event = nil
+		if err := r.setJob(id, job, true); err != nil {
+			return err
+		}
+		r.Logger.Printf("event %s rejected: saved event has no verifiable actor; request the action again if needed", id)
 	}
 	for id, job := range r.State.Jobs {
 		if job.Status == jobPending && job.Event == nil {
@@ -228,6 +260,15 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 		return fmt.Errorf("event gap remains unresolved; inspect missed requests and run with -acknowledge-gap after recovery")
 	}
 	return nil
+}
+
+func hasRestrictedRule(rules []Rule, eventType string) bool {
+	for _, rule := range rules {
+		if rule.Event == eventType && len(rule.AllowedActors) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runner) dispatchJob(ctx context.Context, e Event, job Job) error {
