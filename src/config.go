@@ -88,6 +88,11 @@ func loadConfig(path string) (Config, error) {
 		if rule.CommentCommand != "" && (rule.Event != "IssueCommentEvent" || len(rule.AllowedActors) == 0) {
 			return c, errors.New("comment_command requires IssueCommentEvent and allowed_actors")
 		}
+		for _, actor := range rule.AllowedActors {
+			if actor == "" || strings.TrimSpace(actor) != actor {
+				return c, errors.New("allowed_actors entries must be nonempty GitHub logins without surrounding whitespace")
+			}
+		}
 		if rule.CommentTarget != "" && rule.CommentCommand == "" {
 			return c, errors.New("comment_target requires comment_command")
 		}

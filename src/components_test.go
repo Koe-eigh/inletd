@@ -104,6 +104,62 @@ func TestMatchRuleKeepsFirstEligibleRuleAndCorrectTarget(t *testing.T) {
 	}
 }
 
+func TestAllowedActorsApplyToEveryMatchingRule(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		eventType     string
+		actor         string
+		commentAuthor string
+		command       string
+		wantMatch     bool
+	}{
+		{"comment without command allowed", "IssueCommentEvent", "OWNER", "owner", "", true},
+		{"comment without command denied", "IssueCommentEvent", "outsider", "outsider", "", false},
+		{"comment without command missing actor", "IssueCommentEvent", "", "owner", "", false},
+		{"comment without command conflicting author", "IssueCommentEvent", "owner", "outsider", "", false},
+		{"comment without command missing author", "IssueCommentEvent", "owner", "", "", false},
+		{"comment command allowed", "IssueCommentEvent", "owner", "OWNER", "/run", true},
+		{"comment command denied", "IssueCommentEvent", "outsider", "outsider", "/run", false},
+		{"comment command conflicting author", "IssueCommentEvent", "owner", "outsider", "/run", false},
+		{"issue action allowed", "IssuesEvent", "owner", "", "", true},
+		{"issue action denied", "IssuesEvent", "outsider", "", "", false},
+		{"PR action allowed", "PullRequestEvent", "owner", "", "", true},
+		{"PR action denied", "PullRequestEvent", "outsider", "", "", false},
+		{"review action allowed", "PullRequestReviewEvent", "owner", "", "", true},
+		{"review action denied", "PullRequestReviewEvent", "outsider", "", "", false},
+		{"review action missing actor", "PullRequestReviewEvent", "", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := Event{Type: tc.eventType}
+			e.Actor.Login = tc.actor
+			e.Repo.Name = "acme/app"
+			payload := map[string]any{"action": "opened", "issue": map[string]any{"number": 30, "user": map[string]any{"login": "owner"}}, "pull_request": map[string]any{"number": 30, "user": map[string]any{"login": "owner"}}}
+			if tc.eventType == "IssueCommentEvent" {
+				payload["action"] = "created"
+				payload["comment"] = map[string]any{"body": "/run", "user": map[string]any{"login": tc.commentAuthor}}
+			}
+			e.Payload, _ = json.Marshal(payload)
+			rule := Rule{Event: tc.eventType, AllowedActors: []string{"owner"}, CommentCommand: tc.command}
+			if tc.command != "" {
+				rule.CommentTarget = "issue"
+			}
+			spec, err := (DeclarativeRuleRouter{Rules: []Rule{rule}}).Route(e)
+			if err != nil || (spec != nil) != tc.wantMatch {
+				t.Fatalf("route = %+v, error = %v, want match %t", spec, err, tc.wantMatch)
+			}
+			if spec != nil && spec.Values.requester != tc.actor {
+				t.Fatalf("requester = %q, want %q", spec.Values.requester, tc.actor)
+			}
+		})
+	}
+
+	e := commentEvent("public", "", "any comment", false)
+	rule := Rule{Event: "IssueCommentEvent"}
+	if spec, err := (DeclarativeRuleRouter{Rules: []Rule{rule}}).Route(e); err != nil || spec == nil {
+		t.Fatalf("unrestricted rule must remain eligible: %+v, %v", spec, err)
+	}
+}
+
 func TestFetchUsesETagAndPollInterval(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
