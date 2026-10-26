@@ -85,6 +85,9 @@ func loadConfig(path string) (Config, error) {
 		if rule.Event == "" || len(rule.Command) == 0 || rule.Prompt == "" {
 			return c, errors.New("each rule needs event, command and prompt")
 		}
+		if err := validateCommandTemplate(rule.Command); err != nil {
+			return c, fmt.Errorf("rule %q: %w", rule.Event, err)
+		}
 		if rule.CommentCommand != "" && (rule.Event != "IssueCommentEvent" || len(rule.AllowedActors) == 0) {
 			return c, errors.New("comment_command requires IssueCommentEvent and allowed_actors")
 		}
