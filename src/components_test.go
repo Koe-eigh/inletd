@@ -228,13 +228,48 @@ func TestAgentRendersPromptIntoArgumentsAndStdin(t *testing.T) {
 	dir := t.TempDir()
 	r := CommandAgentRunner{Config: Config{Workdir: dir, AgentTimeoutSec: 5}}
 	rule := Rule{Command: []string{"sh", "-c", "printf '%s\\n' \"$1\" > args.txt; cat > stdin.txt", "sh", "{prompt}"}, Prompt: "Issue {number}: {title}"}
-	if err := r.Run(context.Background(), event("1", "IssuesEvent", "opened", 1, "Title"), rule, eventValues{number: 1, title: "Title"}); err != nil {
+	title := "$(touch injected); 'quoted'"
+	if err := r.Run(context.Background(), event("1", "IssuesEvent", "opened", 1, title), rule, eventValues{number: 1, title: title}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"args.txt", "stdin.txt"} {
 		b, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil || strings.TrimSpace(string(b)) != "Issue 1: Title" {
+		if err != nil || strings.TrimSpace(string(b)) != "Issue 1: "+title {
 			t.Fatalf("%s: %q, %v", name, b, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "injected")); !os.IsNotExist(err) {
+		t.Fatalf("event title executed as shell code: %v", err)
+	}
+}
+
+func TestAgentRejectsEventPlaceholdersInShellScripts(t *testing.T) {
+	for _, command := range [][]string{
+		{"sh", "-c", "echo {title}"},
+		{"/bin/bash", "-lc", "echo '{prompt}'"},
+		{"dash", "-ec", "echo {url}"},
+		{"{title}", "safe"},
+	} {
+		dir := t.TempDir()
+		rule := Rule{Event: "IssuesEvent", Command: command, Prompt: "Issue {title}"}
+		config := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), Rules: []Rule{rule}}
+		b, err := json.Marshal(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, "config.json")
+		if err := os.WriteFile(path, b, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadConfig(path); err == nil {
+			t.Errorf("loadConfig accepted unsafe command %q", command)
+		}
+		r := CommandAgentRunner{Config: Config{Workdir: dir, AgentTimeoutSec: 5}}
+		if err := r.Run(context.Background(), event("1", "IssuesEvent", "opened", 1, "$(touch injected)"), rule, eventValues{title: "$(touch injected)"}); err == nil {
+			t.Errorf("Run accepted unsafe command %q", command)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "injected")); !os.IsNotExist(err) {
+			t.Fatalf("unsafe command executed: %v", err)
 		}
 	}
 }

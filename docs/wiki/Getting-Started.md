@@ -31,6 +31,8 @@ Each rule specifies a GitHub event type (`event`), optional payload action allow
 
 Prompt and command arguments support `{repo}`, `{event}`, `{action}`, `{number}`, `{url}`, `{title}`, and `{requester}` for comment events. `{prompt}` in a command argument inserts the rendered prompt; standard input always receives it. For issue and PR events, Inletd constructs the GitHub URL from the repository and number when the event omits it; `{title}` can be empty.
 
+Treat the command array as administrator-controlled configuration. GitHub event values are untrusted. Inletd rejects placeholders in the executable and in the script argument of a direct `sh`, `bash`, `dash`, `ksh`, `zsh`, or `ash` `-c` command, including combined options such as `-lc`. Put the prompt on standard input or pass event values as separate positional arguments to a fixed script, for example `["sh", "-c", "printf '%s\\n' \"$1\"", "sh", "{title}"]`. Do not interpolate event values into code run by other interpreters or by shell wrappers; those command templates remain an administrator-only escape hatch.
+
 For a quick test without an AI agent, set one rule's command to `["sh", "-c", "cat > inletd-prompt.txt"]`, set `state_file` to a new path, and run with `-replay-existing -once` against a repository with a matching recent event. The prompt appears in the configured working directory.
 
 See [Workflows](Workflows.md) for the included rules and [Event handling and recovery](Event-Handling-and-Recovery.md) before retrying a failed job.
