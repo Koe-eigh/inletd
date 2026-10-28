@@ -1,0 +1,45 @@
+{
+  "provider": "gitlab",
+  "repository": "GROUP/SUBGROUP/PROJECT",
+  "api_url": "https://gitlab.com/api/v4",
+  "token_env": "GITLAB_TOKEN",
+  "workdir": ".",
+  "state_file": ".inletd/gitlab-state.json",
+  "poll_seconds": 60,
+  "agent_timeout_seconds": 1800,
+  "rules": [
+    {
+      "event": "GitLabMergeRequestEvent",
+      "actions": ["opened", "reopened"],
+      "command": ["codex", "exec", "--approve-for-me", "-"],
+      "prompt": "Review merge request !{number} in {repo}: {url}. Use glab or the GitLab API to inspect the current diff and existing discussions. Report actionable findings on changed lines and avoid duplicate reviews for the same head SHA."
+    },
+    {
+      "event": "GitLabNoteEvent",
+      "actions": ["created"],
+      "comment_command": "/inletd implement",
+      "comment_target": "issue",
+      "allowed_actors": ["YOUR_GITLAB_USERNAME"],
+      "command": ["codex", "exec", "--approve-for-me", "-"],
+      "prompt": "Implement GitLab issue #{number} in {repo}: {url}. Requested by {requester}. Read the issue and project instructions. Use glab or the GitLab API to check for an existing merge request, then implement, test, commit, push, and open a merge request that closes the issue. Report its URL."
+    },
+    {
+      "event": "GitLabNoteEvent",
+      "actions": ["created"],
+      "comment_command": "/inletd review",
+      "comment_target": "pull_request",
+      "allowed_actors": ["YOUR_GITLAB_USERNAME"],
+      "command": ["codex", "exec", "--approve-for-me", "-"],
+      "prompt": "Review GitLab merge request !{number} in {repo}: {url}. Requested by {requester}. Use glab or the GitLab API to inspect the current head SHA, diff, and existing discussions; post one review for that SHA."
+    },
+    {
+      "event": "GitLabNoteEvent",
+      "actions": ["created"],
+      "comment_command": "/inletd fix",
+      "comment_target": "pull_request",
+      "allowed_actors": ["YOUR_GITLAB_USERNAME"],
+      "command": ["codex", "exec", "--approve-for-me", "-"],
+      "prompt": "Address review feedback on GitLab merge request !{number} in {repo}: {url}. Requested by {requester}. Use glab or the GitLab API to inspect discussions, fix valid findings, test, commit, push, and reply to threads. Report the merge request URL."
+    }
+  ]
+}
