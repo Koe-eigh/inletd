@@ -12,15 +12,23 @@ import (
 )
 
 type Config struct {
-	Provider        string `json:"provider"`
-	TokenEnv        string `json:"token_env"`
-	Repository      string `json:"repository"`
-	Workdir         string `json:"workdir"`
-	StateFile       string `json:"state_file"`
-	PollSeconds     int    `json:"poll_seconds"`
-	AgentTimeoutSec int    `json:"agent_timeout_seconds"`
-	APIURL          string `json:"api_url"`
-	Rules           []Rule `json:"rules"`
+	Provider        string      `json:"provider"`
+	Gmail           GmailConfig `json:"gmail,omitempty"`
+	TokenEnv        string      `json:"token_env"`
+	Repository      string      `json:"repository"`
+	Workdir         string      `json:"workdir"`
+	StateFile       string      `json:"state_file"`
+	PollSeconds     int         `json:"poll_seconds"`
+	AgentTimeoutSec int         `json:"agent_timeout_seconds"`
+	APIURL          string      `json:"api_url"`
+	Rules           []Rule      `json:"rules"`
+}
+
+type GmailConfig struct {
+	Query         string `json:"query"`
+	CLIPath       string `json:"cli_path"`
+	UserID        string `json:"user_id"`
+	SigningKeyEnv string `json:"signing_key_env"`
 }
 
 type Rule struct {
@@ -55,10 +63,10 @@ func loadConfig(path string) (Config, error) {
 	if c.Provider == "" {
 		c.Provider = "github"
 	}
-	if c.Provider != "github" && c.Provider != "gitlab" {
-		return c, errors.New("provider must be github or gitlab")
+	if c.Provider != "github" && c.Provider != "gitlab" && c.Provider != "gmail" {
+		return c, errors.New("provider must be github, gitlab or gmail")
 	}
-	if c.Repository == "" || strings.HasPrefix(c.Repository, "/") || strings.HasSuffix(c.Repository, "/") || strings.Contains(c.Repository, "//") || (c.Provider == "github" && len(strings.Split(c.Repository, "/")) != 2) {
+	if c.Repository == "" || strings.HasPrefix(c.Repository, "/") || strings.HasSuffix(c.Repository, "/") || strings.Contains(c.Repository, "//") || (c.Provider != "gitlab" && len(strings.Split(c.Repository, "/")) != 2) {
 		return c, errors.New("repository must be owner/name for GitHub or a GitLab project path")
 	}
 	if c.Workdir == "" || c.StateFile == "" {
@@ -92,6 +100,23 @@ func loadConfig(path string) (Config, error) {
 			c.APIURL = "https://gitlab.com/api/v4"
 		} else {
 			c.APIURL = "https://api.github.com"
+		}
+	}
+	if c.Provider == "gmail" {
+		if c.Gmail.Query == "" {
+			return c, errors.New("gmail.query is required")
+		}
+		if c.Gmail.CLIPath == "" {
+			c.Gmail.CLIPath = "gws"
+		}
+		if c.Gmail.UserID == "" {
+			c.Gmail.UserID = "me"
+		}
+		if c.Gmail.SigningKeyEnv == "" {
+			c.Gmail.SigningKeyEnv = "INLETD_GMAIL_SIGNING_KEY"
+		}
+		if len(os.Getenv(c.Gmail.SigningKeyEnv)) < 32 {
+			return c, fmt.Errorf("Gmail signing key environment variable %s must contain at least 32 bytes", c.Gmail.SigningKeyEnv)
 		}
 	}
 	if c.Provider == "gitlab" {

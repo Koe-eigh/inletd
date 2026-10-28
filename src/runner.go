@@ -71,7 +71,7 @@ func (r *Runner) setJob(id string, job Job, seen bool) error {
 	next.Jobs[id] = job
 	if seen {
 		next.Seen = append(slices.Clone(r.State.Seen), id)
-		if len(next.Seen) > 1000 {
+		if r.Config.Provider != "gmail" && len(next.Seen) > 1000 {
 			for _, old := range next.Seen[:len(next.Seen)-1000] {
 				if next.Jobs[old].Status == jobCompleted || next.Jobs[old].Status == jobRejected {
 					delete(next.Jobs, old)
@@ -114,8 +114,13 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 	if r.Source == nil {
 		return fmt.Errorf("event source is not configured")
 	}
+	if gmail, ok := r.Source.(*GmailEventSource); ok {
+		gmail.SetProcessed(r.State.Seen, r.State.Jobs)
+	}
 	batch, err := r.Source.Fetch(ctx)
-	if batch.PollInterval > r.PollInterval {
+	if r.Config.Provider == "gmail" {
+		r.PollInterval = batch.PollInterval
+	} else if batch.PollInterval > r.PollInterval {
 		r.PollInterval = batch.PollInterval
 	}
 	if err != nil {
@@ -214,7 +219,7 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 		}
 		next := r.State
 		next.Seen = append(slices.Clone(r.State.Seen), e.ID)
-		if len(next.Seen) > 1000 {
+		if r.Config.Provider != "gmail" && len(next.Seen) > 1000 {
 			next.Seen = next.Seen[len(next.Seen)-1000:]
 		}
 		if err := r.persist(next); err != nil {
