@@ -13,9 +13,10 @@ import (
 )
 
 type Event struct {
-	ID    string `json:"id"`
-	Type  string `json:"type"`
-	Actor struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Provider string `json:"provider,omitempty"`
+	Actor    struct {
 		Login string `json:"login"`
 	} `json:"actor"`
 	Repo struct {

@@ -1,0 +1,8 @@
+[
+  {"id": 106, "project_id": 77, "action_name": "commented on", "target_type": "Note", "author": {"username": "owner"}, "note": {"id": 606, "body": "/inletd fix", "noteable_iid": 8, "noteable_type": "MergeRequest", "author": {"username": "owner"}}},
+  {"id": 105, "project_id": 77, "action_name": "commented on", "target_type": "Note", "author": {"username": "outsider"}, "note": {"id": 605, "body": "/inletd implement", "noteable_iid": 9, "noteable_type": "Issue", "author": {"username": "outsider"}}},
+  {"id": 104, "project_id": 77, "action_name": "commented on", "target_type": "Note", "author": {"username": "owner"}, "note": {"id": 604, "body": "/inletd implement", "noteable_iid": 9, "noteable_type": "Issue", "author": {"username": "owner"}}},
+  {"id": 103, "project_id": 77, "action_name": "commented on", "target_type": "Note", "author": {"username": "owner"}, "note": {"id": 603, "body": "/inletd implement", "noteable_iid": 8, "noteable_type": "MergeRequest", "author": {"username": "owner"}}},
+  {"id": 102, "project_id": 77, "action_name": "opened", "target_type": "Issue", "target_iid": 9, "target_title": "Fix bug", "author": {"username": "author"}},
+  {"id": 101, "project_id": 77, "action_name": "opened", "target_type": "MergeRequest", "target_iid": 8, "target_title": "Refactor", "author": {"username": "author"}}
+]

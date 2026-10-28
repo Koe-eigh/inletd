@@ -16,6 +16,7 @@ It listens for remote events such as GitHub events, and automatically triggers l
 - [Workflows](https://github.com/Koe-eigh/inletd/wiki/Workflows)
 - [Event handling and recovery](https://github.com/Koe-eigh/inletd/wiki/Event-Handling-and-Recovery)
 - [Limitations](https://github.com/Koe-eigh/inletd/wiki/Limitations)
+- [GitLab projects](docs/wiki/GitLab.md)
 
 ## Development checks
 

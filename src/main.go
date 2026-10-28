@@ -30,11 +30,22 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	r := &Runner{Config: cfg, Source: NewGitHubEventSource(cfg, &http.Client{Timeout: 20 * time.Second}), Router: DeclarativeRuleRouter{Rules: cfg.Rules}, AgentRunner: CommandAgentRunner{Config: cfg}, Store: JSONFileStateStore{Path: cfg.StateFile}, Logger: log.Default()}
+	var source EventSource = NewGitHubEventSource(cfg, &http.Client{Timeout: 20 * time.Second})
+	if cfg.Provider == "gitlab" {
+		source = NewGitLabEventSource(cfg, &http.Client{Timeout: 20 * time.Second})
+	}
+	r := &Runner{Config: cfg, Source: source, Router: DeclarativeRuleRouter{Rules: cfg.Rules}, AgentRunner: CommandAgentRunner{Config: cfg}, Store: JSONFileStateStore{Path: cfg.StateFile}, Logger: log.Default()}
 	r.State, err = r.Store.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
+	if r.State.Source != "" && r.State.Source != cfg.Provider+":"+cfg.APIURL+":"+cfg.Repository {
+		log.Fatal("state file belongs to another provider or project; use a separate state_file")
+	}
+	if r.State.Source == "" && cfg.Provider == "gitlab" && (r.State.Initialized || len(r.State.Jobs) > 0 || len(r.State.Seen) > 0) {
+		log.Fatal("existing state file has no provider identity; use a separate state_file for GitLab")
+	}
+	r.State.Source = cfg.Provider + ":" + cfg.APIURL + ":" + cfg.Repository
 	if *resolveEvent != "" {
 		next, err := r.State.resolveJob(*resolveEvent, *resolution)
 		if err != nil {

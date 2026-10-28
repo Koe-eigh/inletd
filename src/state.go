@@ -7,6 +7,7 @@ import (
 )
 
 type State struct {
+	Source      string         `json:"source,omitempty"`
 	Initialized bool           `json:"initialized"`
 	Seen        []string       `json:"seen"`
 	Cursor      string         `json:"cursor,omitempty"`

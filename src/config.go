@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
 type Config struct {
+	Provider        string `json:"provider"`
+	TokenEnv        string `json:"token_env"`
 	Repository      string `json:"repository"`
 	Workdir         string `json:"workdir"`
 	StateFile       string `json:"state_file"`
@@ -49,8 +52,14 @@ func loadConfig(path string) (Config, error) {
 		}
 		return c, errors.New("trailing JSON value after config")
 	}
-	if c.Repository == "" || len(strings.Split(c.Repository, "/")) != 2 {
-		return c, errors.New("repository must be owner/name")
+	if c.Provider == "" {
+		c.Provider = "github"
+	}
+	if c.Provider != "github" && c.Provider != "gitlab" {
+		return c, errors.New("provider must be github or gitlab")
+	}
+	if c.Repository == "" || strings.HasPrefix(c.Repository, "/") || strings.HasSuffix(c.Repository, "/") || strings.Contains(c.Repository, "//") || (c.Provider == "github" && len(strings.Split(c.Repository, "/")) != 2) {
+		return c, errors.New("repository must be owner/name for GitHub or a GitLab project path")
 	}
 	if c.Workdir == "" || c.StateFile == "" {
 		return c, errors.New("workdir and state_file are required")
@@ -79,7 +88,23 @@ func loadConfig(path string) (Config, error) {
 		c.AgentTimeoutSec = 1800
 	}
 	if c.APIURL == "" {
-		c.APIURL = "https://api.github.com"
+		if c.Provider == "gitlab" {
+			c.APIURL = "https://gitlab.com/api/v4"
+		} else {
+			c.APIURL = "https://api.github.com"
+		}
+	}
+	if c.Provider == "gitlab" {
+		if c.TokenEnv == "" {
+			c.TokenEnv = "GITLAB_TOKEN"
+		}
+		u, err := url.Parse(c.APIURL)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || !strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/api/v4") || u.RawQuery != "" || u.Fragment != "" {
+			return c, errors.New("GitLab api_url must be an absolute URL ending in /api/v4")
+		}
+		if os.Getenv(c.TokenEnv) == "" {
+			return c, fmt.Errorf("GitLab token environment variable %s is empty", c.TokenEnv)
+		}
 	}
 	for _, rule := range c.Rules {
 		if rule.Event == "" || len(rule.Command) == 0 || rule.Prompt == "" {
@@ -88,12 +113,16 @@ func loadConfig(path string) (Config, error) {
 		if err := validateCommandTemplate(rule.Command); err != nil {
 			return c, fmt.Errorf("rule %q: %w", rule.Event, err)
 		}
-		if rule.CommentCommand != "" && (rule.Event != "IssueCommentEvent" || len(rule.AllowedActors) == 0) {
-			return c, errors.New("comment_command requires IssueCommentEvent and allowed_actors")
+		commentEvent := rule.Event == "IssueCommentEvent" || rule.Event == "GitLabNoteEvent"
+		if rule.CommentCommand != "" && (!commentEvent || len(rule.AllowedActors) == 0) {
+			return c, errors.New("comment_command requires a comment event and allowed_actors")
+		}
+		if c.Provider == "gitlab" && rule.Event == "GitLabNoteEvent" && (rule.CommentCommand == "" || rule.CommentTarget == "") {
+			return c, errors.New("GitLab note rules require comment_command and comment_target")
 		}
 		for _, actor := range rule.AllowedActors {
 			if actor == "" || strings.TrimSpace(actor) != actor {
-				return c, errors.New("allowed_actors entries must be nonempty GitHub logins without surrounding whitespace")
+				return c, errors.New("allowed_actors entries must be nonempty usernames without surrounding whitespace")
 			}
 		}
 		if rule.CommentTarget != "" && rule.CommentCommand == "" {

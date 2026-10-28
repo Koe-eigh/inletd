@@ -56,13 +56,13 @@ func matchRule(e Event, rules []Rule) (*Rule, eventValues, error) {
 		return nil, eventValues{}, err
 	}
 	values := eventValues{action: d.Action, number: d.Issue.Number, url: d.Issue.HTMLURL, title: d.Issue.Title, requester: e.Actor.Login}
-	if e.Type == "PullRequestEvent" || e.Type == "PullRequestReviewEvent" {
+	if e.Type == "PullRequestEvent" || e.Type == "PullRequestReviewEvent" || e.Type == "GitLabMergeRequestEvent" {
 		values.number, values.url, values.title = d.PullRequest.Number, d.PullRequest.HTMLURL, d.PullRequest.Title
 	}
 	if values.number == 0 {
 		values.number = d.Number
 	}
-	if values.url == "" && values.number > 0 {
+	if values.url == "" && values.number > 0 && e.Provider != "gitlab" {
 		switch e.Type {
 		case "PullRequestEvent", "PullRequestReviewEvent":
 			values.url = fmt.Sprintf("https://github.com/%s/pull/%d", e.Repo.Name, values.number)
@@ -79,7 +79,7 @@ func matchRule(e Event, rules []Rule) (*Rule, eventValues, error) {
 			if values.requester == "" || !containsFold(rule.AllowedActors, values.requester) {
 				continue
 			}
-			if e.Type == "IssueCommentEvent" && (d.Comment.User.Login == "" || !strings.EqualFold(values.requester, d.Comment.User.Login)) {
+			if (e.Type == "IssueCommentEvent" || e.Type == "GitLabNoteEvent") && (d.Comment.User.Login == "" || !strings.EqualFold(values.requester, d.Comment.User.Login)) {
 				continue
 			}
 		}
@@ -94,7 +94,7 @@ func matchRule(e Event, rules []Rule) (*Rule, eventValues, error) {
 			if (target == "pull_request") != (d.Issue.PullRequest != nil) {
 				continue
 			}
-			if target == "pull_request" {
+			if target == "pull_request" && e.Provider != "gitlab" {
 				values.url = fmt.Sprintf("https://github.com/%s/pull/%d", e.Repo.Name, values.number)
 			}
 		}
