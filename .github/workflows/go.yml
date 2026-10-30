@@ -21,6 +21,8 @@ jobs:
           cache: false
       - name: Test
         run: go test ./...
+      - name: Test Gmail bridge
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - name: Vet
         run: go vet ./...
       - name: Build
