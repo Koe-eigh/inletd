@@ -21,7 +21,7 @@ It listens for remote events such as GitHub events, and automatically triggers l
 
 ## Gmail polling
 
-Set `provider` to `gmail` to poll a Gmail mailbox through `gws` without an inbound port. Configure `gmail.query` (for example, `label:github-events`), set a signing key of at least 32 bytes in `INLETD_GMAIL_SIGNING_KEY`, and use a dedicated `state_file`. Gmail polling accepts signed, structured GitHub event emails; ordinary GitHub notification emails do not contain a complete webhook payload. See [Gmail polling](docs/wiki/Gmail.md) for the email format, setup, and delivery limitations.
+Set `provider` to `gmail` to poll a Gmail mailbox through `gws` without an inbound port. Configure `gmail.query` (for example, `subject:inletd-event`), set a signing key of at least 32 bytes in `INLETD_GMAIL_SIGNING_KEY`, and use a dedicated `state_file`. Gmail polling accepts signed, structured GitHub event emails; ordinary GitHub notification emails do not contain a complete webhook payload. This repository includes an optional GitHub Actions email bridge. See [Gmail polling](docs/wiki/Gmail.md) for its setup and delivery limitations.
 
 ## Development checks
 

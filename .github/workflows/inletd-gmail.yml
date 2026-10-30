@@ -1,0 +1,31 @@
+name: Deliver inletd events to Gmail
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  deliver:
+    if: vars.INLETD_GMAIL_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Send signed event email
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          INLETD_GMAIL_TO: ${{ secrets.INLETD_GMAIL_TO }}
+          INLETD_SMTP_USER: ${{ secrets.INLETD_SMTP_USER }}
+          INLETD_SMTP_PASSWORD: ${{ secrets.INLETD_SMTP_PASSWORD }}
+          INLETD_GMAIL_SIGNING_KEY: ${{ secrets.INLETD_GMAIL_SIGNING_KEY }}
+        run: python3 .github/scripts/send_inletd_event.py

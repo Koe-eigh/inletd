@@ -41,7 +41,28 @@ A GitHub Actions email bridge must send one `text/plain` body containing a JSON 
 
 The `payload` must have the fields required by the selected inletd rule, matching the GitHub event payload shape. Set the `X-Inletd-Signature-SHA256` email header to `sha256=` followed by the lowercase hex HMAC-SHA256 of the **exact UTF-8 bytes of the text/plain body**, using the shared signing key. The bridge should obtain the event type, repository, delivery ID, actor, and payload directly from the trusted GitHub Actions event context. Treat all event fields as untrusted input when constructing the email and do not let a pull request change the bridge workflow or access the signing key. The sender address is not used for authentication.
 
-GitHub's native notification emails do not supply a guaranteed complete, structured webhook payload and are therefore not accepted as events. The bridge and its email delivery service are separate from inletd; this repository does not send event emails.
+GitHub's native notification emails do not supply a guaranteed complete, structured webhook payload and are therefore not accepted as events. A separate bridge must create the signed email; the optional GitHub Actions bridge below provides one way to do that.
+
+## GitHub Actions bridge for this repository
+
+The repository includes `.github/workflows/inletd-gmail.yml`, which sends signed emails for opened or reopened pull requests and newly created issue comments. It checks out only the trusted base repository code. The job is disabled until the repository variable `INLETD_GMAIL_ENABLED` is set to `true`.
+
+Configure these GitHub Actions secrets before enabling the variable:
+
+| Secret | Value |
+| --- | --- |
+| `INLETD_GMAIL_TO` | Mailbox address that inletd polls |
+| `INLETD_SMTP_USER` | Gmail address used to send the event emails |
+| `INLETD_SMTP_PASSWORD` | App password for the sender's Gmail account |
+| `INLETD_GMAIL_SIGNING_KEY` | The same secret set in inletd's local environment, at least 32 bytes |
+
+The sender needs [two-step verification and an app password](https://support.google.com/accounts/answer/185833). The bridge uses Gmail SMTP over TLS and a fixed subject beginning `inletd-event`. Set the local `gmail.query` to `subject:inletd-event`, and use a new state file when switching from the GitHub API source. Install and authenticate [`gws`](https://github.com/googleworkspace/cli) locally with Gmail read permission, then verify the mailbox with:
+
+```sh
+gws gmail users messages list --params '{"userId":"me","q":"subject:inletd-event"}'
+```
+
+Start inletd normally after the secrets and repository variable are set. Its first Gmail poll records existing messages without dispatching them. Keep the signing key out of the configuration file and repository. If delivery fails, inspect the `Deliver inletd events to Gmail` workflow run before retrying; a new email for the same GitHub event can run the agent twice.
 
 ## Delivery and recovery
 
