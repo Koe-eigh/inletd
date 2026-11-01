@@ -30,6 +30,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	lock, err := acquireStateLock(cfg.StateFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer lock.Close()
 	var source EventSource = NewGitHubEventSource(cfg, &http.Client{Timeout: 20 * time.Second})
 	if cfg.Provider == "gitlab" {
 		source = NewGitLabEventSource(cfg, &http.Client{Timeout: 20 * time.Second})

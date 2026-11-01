@@ -4,6 +4,8 @@ Inletd polls the GitHub repository Events API. On the first normal run, it recor
 
 For a matching event, the state file records a `pending` job, then a `running` job before starting the agent, and finally a `completed` job after success. A crash, agent error, or failed completion write can leave `running` even if the agent created a commit or PR. On restart, Inletd skips that event and logs its ID and target URL.
 
+Only one Inletd process can own a state file at a time. Startup obtains an exclusive, nonblocking OS lock on `<state_file>.lock` before reading state and holds it until exit. A second daemon or a `-resolve-event`/`-acknowledge-gap` command using that path exits with an `already owned` error. Stop the daemon before running either command. The lock file may remain after exit; leave it in place. macOS and Linux use `flock`; Windows uses `LockFileEx`. Each releases the lock when the process exits, including after a crash. Use the same state path on a local filesystem for every process; this does not coordinate independent machines whose filesystems do not share locks.
+
 Stop the poller. Inspect the target issue or PR, the working tree, and the `jobs` entry in the state file. Then choose one resolution:
 
 ```sh
