@@ -115,13 +115,13 @@ func TestGmailSignedDeliveryReplayAcrossMessagesAndRestart(t *testing.T) {
 	if err := r.Poll(context.Background(), false); err != nil || runs != 1 || getCalls["mail-a"] != 1 {
 		t.Fatalf("replay: runs=%d calls=%v err=%v", runs, getCalls, err)
 	}
-	mailboxes = []string{"mail-b", "mail-c"} // Original message has been deleted.
+	mailboxes = []string{"mail-d", "mail-b", "mail-c"} // Original message has been deleted; mail-d is another copy.
 	r = makeRunner()
 	r.State, _ = r.Store.Load()
-	if err := r.Poll(context.Background(), false); err != nil || runs != 2 || getCalls["mail-b"] != 1 {
+	if err := r.Poll(context.Background(), false); err != nil || runs != 2 || getCalls["mail-b"] != 1 || getCalls["mail-d"] != 1 {
 		t.Fatalf("restart and distinct delivery: runs=%d calls=%v err=%v", runs, getCalls, err)
 	}
-	if len(r.State.Seen) != 2 || len(r.State.GmailMessages) != 3 {
+	if len(r.State.Seen) != 2 || len(r.State.GmailMessages) != 4 {
 		t.Fatalf("state=%+v", r.State)
 	}
 }
