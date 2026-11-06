@@ -20,10 +20,12 @@ import (
 type gmailCLI func(context.Context, string, ...string) ([]byte, error)
 
 type GmailEventSource struct {
-	config    Config
-	run       gmailCLI
-	processed map[string]bool
-	failures  int
+	config           Config
+	run              gmailCLI
+	processed        map[string]bool
+	mailboxProcessed map[string]bool
+	legacyProcessed  map[string]bool
+	failures         int
 }
 
 func NewGmailEventSource(config Config, run gmailCLI) *GmailEventSource {
@@ -63,13 +65,24 @@ func (b *limitedOutput) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-func (s *GmailEventSource) SetProcessed(seen []string, jobs map[string]Job) {
+func (s *GmailEventSource) SetProcessed(seen []string, jobs map[string]Job, mailboxIDs []string) {
 	s.processed = make(map[string]bool, len(seen)+len(jobs))
+	s.legacyProcessed = make(map[string]bool)
+	s.mailboxProcessed = make(map[string]bool, len(mailboxIDs))
 	for _, id := range seen {
 		s.processed[id] = true
+		if strings.HasPrefix(id, "gmail:") && strings.Count(id, ":") == 1 {
+			s.legacyProcessed[id] = true
+		}
 	}
 	for id := range jobs {
 		s.processed[id] = true
+		if strings.HasPrefix(id, "gmail:") && strings.Count(id, ":") == 1 {
+			s.legacyProcessed[id] = true
+		}
+	}
+	for _, id := range mailboxIDs {
+		s.mailboxProcessed[id] = true
 	}
 }
 func (s *GmailEventSource) Commit() {}
@@ -131,7 +144,7 @@ func (s *GmailEventSource) Fetch(ctx context.Context) (EventBatch, error) {
 				continue
 			}
 			id := "gmail:" + item.ID
-			if s.processed[id] || fetched[id] {
+			if s.mailboxProcessed[item.ID] || fetched[id] {
 				continue
 			}
 			fetched[id] = true
@@ -148,7 +161,17 @@ func (s *GmailEventSource) Fetch(ctx context.Context) (EventBatch, error) {
 				event = Event{ID: id}
 				event.Repo.Name = s.config.Repository
 				event.Payload = json.RawMessage(`{}`)
+			} else {
+				if s.legacyProcessed[id] {
+					batch.GmailLegacySeen = append(batch.GmailLegacySeen, event.ID)
+				}
+				if s.processed[event.ID] || fetched[event.ID] || s.legacyProcessed[id] {
+					batch.GmailMessages = append(batch.GmailMessages, item.ID)
+					continue
+				}
+				fetched[event.ID] = true
 			}
+			batch.GmailMessages = append(batch.GmailMessages, item.ID)
 			batch.Events = append(batch.Events, event)
 		}
 		if listing.NextPageToken == "" {
@@ -242,11 +265,24 @@ func parseGmailMessage(msg gmailMessage, key []byte, repo string) (Event, error)
 	if dec.Decode(&extra) != io.EOF {
 		return event, errors.New("trailing envelope data")
 	}
-	if envelope.DeliveryID == "" || envelope.EventType == "" || !strings.EqualFold(envelope.Repository, repo) || envelope.Actor == "" || !json.Valid(envelope.Payload) {
+	if !validGmailDeliveryID(envelope.DeliveryID) || envelope.EventType == "" || !strings.EqualFold(envelope.Repository, repo) || envelope.Actor == "" || !json.Valid(envelope.Payload) {
 		return event, errors.New("incomplete or wrong-repository event envelope")
 	}
-	event = Event{ID: "gmail:" + msg.ID, Type: envelope.EventType, Provider: "gmail", Payload: envelope.Payload}
+	event = Event{ID: "gmail:" + strings.ToLower(envelope.Repository) + ":" + envelope.DeliveryID, Type: envelope.EventType, Provider: "gmail", Payload: envelope.Payload}
 	event.Repo.Name = envelope.Repository
 	event.Actor.Login = envelope.Actor
 	return event, nil
+}
+
+func validGmailDeliveryID(id string) bool {
+	if len(id) == 0 || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }

@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -20,8 +21,15 @@ import (
 const testGmailKey = "a-32-byte-secret-for-gmail-bridge-test"
 
 func signedGmailMessage(t *testing.T, id string) []byte {
+	return signedGmailDelivery(t, id, "delivery-"+id, "acme/app")
+}
+
+func signedGmailDelivery(t *testing.T, id, deliveryID, repo string) []byte {
 	t.Helper()
-	body := []byte(`{"delivery_id":"delivery-` + id + `","event_type":"IssuesEvent","repository":"acme/app","actor":"owner","payload":{"action":"opened","issue":{"number":7,"title":"Test"}}}`)
+	body, err := json.Marshal(map[string]any{"delivery_id": deliveryID, "event_type": "IssuesEvent", "repository": repo, "actor": "owner", "payload": map[string]any{"action": "opened", "issue": map[string]any{"number": 7, "title": "Test"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	mac := hmac.New(sha256.New, []byte(testGmailKey))
 	mac.Write(body)
 	b, _ := json.Marshal(map[string]any{"id": id, "payload": map[string]any{"mimeType": "multipart/alternative", "headers": []map[string]string{{"name": "X-Inletd-Signature-SHA256", "value": "sha256=" + hex.EncodeToString(mac.Sum(nil))}}, "parts": []any{map[string]any{"mimeType": "text/plain", "body": map[string]string{"data": base64.RawURLEncoding.EncodeToString(body)}}}}})
@@ -34,7 +42,7 @@ func TestGmailParseRejectsUntrustedAndMalformedMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 	e, err := parseGmailMessage(msg, []byte(testGmailKey), "acme/app")
-	if err != nil || e.ID != "gmail:one" || e.Type != "IssuesEvent" || e.Actor.Login != "owner" {
+	if err != nil || e.ID != "gmail:acme/app:delivery-one" || e.Type != "IssuesEvent" || e.Actor.Login != "owner" {
 		t.Fatalf("event=%+v, err=%v", e, err)
 	}
 	if _, err := parseGmailMessage(msg, []byte(testGmailKey), "other/repo"); err == nil {
@@ -47,6 +55,94 @@ func TestGmailParseRejectsUntrustedAndMalformedMessages(t *testing.T) {
 	msg.Payload.Parts[0].Body.Data = "not-base64!"
 	if _, err := parseGmailMessage(msg, []byte(testGmailKey), "acme/app"); err == nil {
 		t.Fatal("accepted malformed body")
+	}
+}
+
+func TestGmailDeliveryIDValidationAndRepositoryCanonicalization(t *testing.T) {
+	for _, id := range []string{"", "bad:id", "bad/id", "bad id", "bad\nline", strings.Repeat("a", 129)} {
+		var msg gmailMessage
+		if err := json.Unmarshal(signedGmailDelivery(t, "mail", id, "acme/app"), &msg); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := parseGmailMessage(msg, []byte(testGmailKey), "acme/app"); err == nil {
+			t.Errorf("accepted delivery ID %q", id)
+		}
+	}
+	var msg gmailMessage
+	if err := json.Unmarshal(signedGmailDelivery(t, "mail", "run_12.3", "Acme/App"), &msg); err != nil {
+		t.Fatal(err)
+	}
+	event, err := parseGmailMessage(msg, []byte(testGmailKey), "acme/app")
+	if err != nil || event.ID != "gmail:acme/app:run_12.3" {
+		t.Fatalf("event=%+v, err=%v", event, err)
+	}
+}
+
+func TestGmailSignedDeliveryReplayAcrossMessagesAndRestart(t *testing.T) {
+	t.Setenv("INLETD_GMAIL_SIGNING_KEY", testGmailKey)
+	mailboxes := []string{"mail-a"}
+	getCalls := map[string]int{}
+	cli := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		var params map[string]any
+		if err := json.Unmarshal([]byte(args[len(args)-1]), &params); err != nil {
+			return nil, err
+		}
+		if args[3] == "list" {
+			messages := make([]map[string]string, 0, len(mailboxes))
+			for _, id := range mailboxes {
+				messages = append(messages, map[string]string{"id": id})
+			}
+			return json.Marshal(map[string]any{"messages": messages})
+		}
+		id := params["id"].(string)
+		getCalls[id]++
+		delivery := "same-delivery"
+		if id == "mail-c" {
+			delivery = "distinct-delivery"
+		}
+		return signedGmailDelivery(t, id, delivery, "acme/app"), nil
+	}
+	cfg := Config{Provider: "gmail", Repository: "acme/app", StateFile: filepath.Join(t.TempDir(), "state.json"), Gmail: GmailConfig{CLIPath: "gws", UserID: "me", Query: "label:events", SigningKeyEnv: "INLETD_GMAIL_SIGNING_KEY"}, Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"cat"}, Prompt: "{title}"}}}
+	runs := 0
+	makeRunner := func() *Runner {
+		return &Runner{Config: cfg, Source: NewGmailEventSource(cfg, cli), Router: DeclarativeRuleRouter{Rules: cfg.Rules}, AgentRunner: fakeAgentRunner(func(context.Context, Event, Rule, eventValues) error { runs++; return nil }), Store: JSONFileStateStore{Path: cfg.StateFile}, Logger: log.New(io.Discard, "", 0)}
+	}
+	r := makeRunner()
+	if err := r.Poll(context.Background(), true); err != nil || runs != 1 {
+		t.Fatalf("first delivery: runs=%d err=%v", runs, err)
+	}
+	mailboxes = []string{"mail-b", "mail-a"}
+	if err := r.Poll(context.Background(), false); err != nil || runs != 1 || getCalls["mail-a"] != 1 {
+		t.Fatalf("replay: runs=%d calls=%v err=%v", runs, getCalls, err)
+	}
+	mailboxes = []string{"mail-d", "mail-b", "mail-c"} // Original message has been deleted; mail-d is another copy.
+	r = makeRunner()
+	r.State, _ = r.Store.Load()
+	if err := r.Poll(context.Background(), false); err != nil || runs != 2 || getCalls["mail-b"] != 1 || getCalls["mail-d"] != 1 {
+		t.Fatalf("restart and distinct delivery: runs=%d calls=%v err=%v", runs, getCalls, err)
+	}
+	if len(r.State.Seen) != 2 || len(r.State.GmailMessages) != 4 {
+		t.Fatalf("state=%+v", r.State)
+	}
+}
+
+func TestGmailLegacyMessageIDMigratesWithoutDispatch(t *testing.T) {
+	t.Setenv("INLETD_GMAIL_SIGNING_KEY", testGmailKey)
+	cfg := Config{Provider: "gmail", Repository: "acme/app", StateFile: filepath.Join(t.TempDir(), "state.json"), Gmail: GmailConfig{CLIPath: "gws", UserID: "me", SigningKeyEnv: "INLETD_GMAIL_SIGNING_KEY"}, Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{"cat"}, Prompt: "{title}"}}}
+	cli := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if args[3] == "list" {
+			return []byte(`{"messages":[{"id":"mail-b"},{"id":"mail-a"}]}`), nil
+		}
+		var params map[string]any
+		if err := json.Unmarshal([]byte(args[len(args)-1]), &params); err != nil {
+			return nil, err
+		}
+		return signedGmailDelivery(t, params["id"].(string), "old-delivery", "acme/app"), nil
+	}
+	runs := 0
+	r := &Runner{Config: cfg, Source: NewGmailEventSource(cfg, cli), Router: DeclarativeRuleRouter{Rules: cfg.Rules}, AgentRunner: fakeAgentRunner(func(context.Context, Event, Rule, eventValues) error { runs++; return nil }), Store: JSONFileStateStore{Path: cfg.StateFile}, State: State{Initialized: true, Seen: []string{"gmail:mail-a"}}, Logger: log.New(io.Discard, "", 0)}
+	if err := r.Poll(context.Background(), false); err != nil || runs != 0 || !slices.Contains(r.State.Seen, "gmail:acme/app:old-delivery") {
+		t.Fatalf("migration: runs=%d state=%+v err=%v", runs, r.State, err)
 	}
 }
 

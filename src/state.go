@@ -7,12 +7,13 @@ import (
 )
 
 type State struct {
-	Source      string         `json:"source,omitempty"`
-	Initialized bool           `json:"initialized"`
-	Seen        []string       `json:"seen"`
-	Cursor      string         `json:"cursor,omitempty"`
-	Gap         bool           `json:"gap,omitempty"`
-	Jobs        map[string]Job `json:"jobs,omitempty"`
+	Source        string         `json:"source,omitempty"`
+	Initialized   bool           `json:"initialized"`
+	Seen          []string       `json:"seen"`
+	GmailMessages []string       `json:"gmail_messages,omitempty"`
+	Cursor        string         `json:"cursor,omitempty"`
+	Gap           bool           `json:"gap,omitempty"`
+	Jobs          map[string]Job `json:"jobs,omitempty"`
 }
 
 type Job struct {
