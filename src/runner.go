@@ -28,9 +28,11 @@ type Router interface {
 
 // EventBatch contains normalized events and source polling constraints.
 type EventBatch struct {
-	Events       []Event
-	PollInterval time.Duration
-	AtCapacity   bool
+	Events          []Event
+	GmailMessages   []string
+	GmailLegacySeen []string
+	PollInterval    time.Duration
+	AtCapacity      bool
 }
 
 // EventSource fetches events and commits its polling checkpoint after the
@@ -115,7 +117,7 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 		return fmt.Errorf("event source is not configured")
 	}
 	if gmail, ok := r.Source.(*GmailEventSource); ok {
-		gmail.SetProcessed(r.State.Seen, r.State.Jobs)
+		gmail.SetProcessed(r.State.Seen, r.State.Jobs, r.State.GmailMessages)
 	}
 	batch, err := r.Source.Fetch(ctx)
 	if r.Config.Provider == "gmail" {
@@ -127,12 +129,27 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 		return err
 	}
 	events := batch.Events
+	if len(batch.GmailLegacySeen) > 0 {
+		next := r.State
+		next.Seen = slices.Clone(r.State.Seen)
+		for _, id := range batch.GmailLegacySeen {
+			if !slices.Contains(next.Seen, id) {
+				next.Seen = append(next.Seen, id)
+			}
+		}
+		if err := r.persist(next); err != nil {
+			return err
+		}
+	}
 	if !r.State.Initialized && !replayExisting {
 		next := r.State
 		next.Seen = slices.Clone(r.State.Seen)
 		for _, e := range events {
-			next.Seen = append(next.Seen, e.ID)
+			if !slices.Contains(next.Seen, e.ID) {
+				next.Seen = append(next.Seen, e.ID)
+			}
 		}
+		next.GmailMessages = append(slices.Clone(r.State.GmailMessages), batch.GmailMessages...)
 		next.Initialized = true
 		if len(events) > 0 {
 			next.Cursor = events[0].ID
@@ -256,6 +273,13 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 	if len(events) > 0 && r.State.Cursor != events[0].ID {
 		next := r.State
 		next.Cursor = events[0].ID
+		if err := r.persist(next); err != nil {
+			return err
+		}
+	}
+	if len(batch.GmailMessages) > 0 {
+		next := r.State
+		next.GmailMessages = append(slices.Clone(r.State.GmailMessages), batch.GmailMessages...)
 		if err := r.persist(next); err != nil {
 			return err
 		}
