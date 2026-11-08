@@ -51,7 +51,13 @@ type GitLabEventSource struct {
 }
 
 func NewGitLabEventSource(config Config, client *http.Client) *GitLabEventSource {
-	return &GitLabEventSource{config: config, client: client}
+	// PRIVATE-TOKEN is not protected by net/http's cross-host redirect policy.
+	// Copy the client so callers can continue to use their own redirect policy.
+	redirectSafeClient := *client
+	redirectSafeClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &GitLabEventSource{config: config, client: &redirectSafeClient}
 }
 
 func (s *GitLabEventSource) Commit() {}
@@ -69,6 +75,9 @@ func (s *GitLabEventSource) get(ctx context.Context, path string, dst any) (http
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("GitLab API redirect refused (status %d)", resp.StatusCode)
+	}
 	if seconds, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && seconds > 0 {
 		d := time.Duration(seconds) * time.Second
 		if d > s.interval {

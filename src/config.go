@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -124,8 +125,13 @@ func loadConfig(path string) (Config, error) {
 			c.TokenEnv = "GITLAB_TOKEN"
 		}
 		u, err := url.Parse(c.APIURL)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || !strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/api/v4") || u.RawQuery != "" || u.Fragment != "" {
+		if err != nil || u.Host == "" || !strings.HasSuffix(strings.TrimRight(u.Path, "/"), "/api/v4") || u.RawQuery != "" || u.Fragment != "" {
 			return c, errors.New("GitLab api_url must be an absolute URL ending in /api/v4")
+		}
+		host := u.Hostname()
+		ip := net.ParseIP(host)
+		if u.Scheme != "https" && !(u.Scheme == "http" && (host == "localhost" || ip != nil && ip.IsLoopback())) {
+			return c, errors.New("GitLab api_url must use HTTPS except for loopback hosts")
 		}
 		if os.Getenv(c.TokenEnv) == "" {
 			return c, fmt.Errorf("GitLab token environment variable %s is empty", c.TokenEnv)
