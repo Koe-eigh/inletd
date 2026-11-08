@@ -169,3 +169,92 @@ func TestGitLabConfigDefaultsAndNoteGuard(t *testing.T) {
 		t.Fatal("GitLab note without target accepted")
 	}
 }
+
+func TestGitLabAPIURLRequiresHTTPSOutsideLoopback(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "secret")
+	path := filepath.Join(t.TempDir(), "config.json")
+	for _, tc := range []struct {
+		name, apiURL string
+		wantValid    bool
+	}{
+		{"remote HTTP", "http://gitlab.example.com/api/v4", false},
+		{"remote HTTPS", "https://gitlab.example.com/api/v4", true},
+		{"localhost HTTP", "http://localhost:8080/api/v4", true},
+		{"IPv4 loopback HTTP", "http://127.0.0.1:8080/api/v4", true},
+		{"IPv6 loopback HTTP", "http://[::1]:8080/api/v4", true},
+		{"private network HTTP", "http://192.168.1.10/api/v4", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := json.Marshal(Config{Provider: "gitlab", Repository: "group/app", Workdir: ".", StateFile: "state.json", APIURL: tc.apiURL})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err = loadConfig(path)
+			if (err == nil) != tc.wantValid {
+				t.Fatalf("loadConfig(%q) error = %v, want valid = %t", tc.apiURL, err, tc.wantValid)
+			}
+		})
+	}
+}
+
+func TestGitLabRedirectDoesNotForwardToken(t *testing.T) {
+	t.Setenv("GITLAB_TOKEN", "secret")
+	for _, status := range []int{http.StatusFound, http.StatusTemporaryRedirect} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			destinationCalls := 0
+			destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				destinationCalls++
+				if token := r.Header.Get("PRIVATE-TOKEN"); token != "" {
+					t.Errorf("redirect destination received token %q", token)
+				}
+			}))
+			defer destination.Close()
+			origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("PRIVATE-TOKEN") != "secret" {
+					t.Error("origin did not receive token")
+				}
+				http.Redirect(w, r, destination.URL, status)
+			}))
+			defer origin.Close()
+			client := origin.Client()
+			c := Config{Repository: "group/app", APIURL: origin.URL + "/api/v4", TokenEnv: "GITLAB_TOKEN"}
+			var events []gitLabActivity
+			_, err := NewGitLabEventSource(c, client).get(context.Background(), "/projects/group%2Fapp/events", &events)
+			if err == nil || !strings.Contains(err.Error(), "redirect refused") {
+				t.Fatalf("redirect error = %v", err)
+			}
+			if destinationCalls != 0 {
+				t.Fatalf("redirect destination received %d requests", destinationCalls)
+			}
+			if client.CheckRedirect != nil {
+				t.Fatal("caller's client redirect policy was modified")
+			}
+		})
+	}
+	t.Run("HTTPS downgrade", func(t *testing.T) {
+		destinationCalls := 0
+		destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			destinationCalls++
+			if r.Header.Get("PRIVATE-TOKEN") != "" {
+				t.Error("HTTP destination received token")
+			}
+		}))
+		defer destination.Close()
+		origin := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, destination.URL, http.StatusFound)
+		}))
+		defer origin.Close()
+		c := Config{Repository: "group/app", APIURL: origin.URL + "/api/v4", TokenEnv: "GITLAB_TOKEN"}
+		var events []gitLabActivity
+		_, err := NewGitLabEventSource(c, origin.Client()).get(context.Background(), "/events", &events)
+		if err == nil || !strings.Contains(err.Error(), "redirect refused") {
+			t.Fatalf("redirect error = %v", err)
+		}
+		if destinationCalls != 0 {
+			t.Fatalf("HTTP destination received %d requests", destinationCalls)
+		}
+	})
+}
