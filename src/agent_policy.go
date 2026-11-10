@@ -169,88 +169,82 @@ func (d agentDockerClient) removeContainer(name string) {
 	_ = cmd.Run()
 }
 
-// Resolve existing symlinks, including a dangling link's target and existing
-// parent directories when the final state file has not been created yet.
-func canonicalAgentPath(path string) (string, error) {
-	return canonicalAgentPathDepth(path, 0)
-}
-
-func canonicalAgentPathDepth(path string, depth int) (string, error) {
-	if depth > 255 {
-		return "", fmt.Errorf("too many path components or symbolic links")
-	}
+// Resolve components one at a time, recording each entry before following a
+// symlink. Keeping the full trace prevents an outside -> checkout -> outside
+// link chain from hiding an entry that the agent can replace. Missing tails are
+// retained so paths for state files that have not been created are checked too.
+func resolveAgentPath(path string) (string, []string, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err == nil {
-		return resolved, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	info, statErr := os.Lstat(path)
-	if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		target, err := os.Readlink(path)
+	separator := string(filepath.Separator)
+	root := filepath.VolumeName(path) + separator
+	resolved := root
+	pending := strings.Split(strings.TrimPrefix(path, root), separator)
+	entries := []string{root}
+	links := 0
+	for len(pending) > 0 {
+		part := pending[0]
+		pending = pending[1:]
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+		candidate := filepath.Join(resolved, part)
+		entries = append(entries, candidate)
+		info, err := os.Lstat(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			resolved = candidate
+			continue
+		}
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(path), target)
+		if info.Mode()&os.ModeSymlink == 0 {
+			resolved = candidate
+			continue
 		}
-		return canonicalAgentPathDepth(target, depth+1)
+		links++
+		if links > 255 {
+			return "", nil, fmt.Errorf("too many symbolic links in agent path")
+		}
+		target, err := os.Readlink(candidate)
+		if err != nil {
+			return "", nil, err
+		}
+		if filepath.IsAbs(target) {
+			root = filepath.VolumeName(target) + separator
+			resolved = root
+			target = strings.TrimPrefix(target, root)
+			entries = append(entries, root)
+		}
+		// Do not Clean or Join a link target before expanding it: a preceding
+		// directory symlink changes the meaning of a subsequent '..' component.
+		pending = append(strings.Split(target, separator), pending...)
 	}
-	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
-		return "", statErr
-	}
-	parent := filepath.Dir(path)
-	if parent == path {
-		return "", err
-	}
-	resolved, err = canonicalAgentPathDepth(parent, depth+1)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(resolved, filepath.Base(path)), nil
+	return resolved, entries, nil
 }
 
 func outsideWorkdir(workdir, path string) error {
-	root, err := canonicalAgentPath(workdir)
+	root, _, err := resolveAgentPath(workdir)
 	if err != nil {
 		return err
 	}
-	// Check every traversed directory entry as well as the final target. A path
-	// that enters the checkout and exits through another symlink is still mutable
-	// by the agent, even when its current final target is outside the mount.
-	target, err := canonicalAgentPath(path)
+	_, entries, err := resolveAgentPath(path)
 	if err != nil {
 		return err
 	}
-	candidates := []string{target}
-	path, err = filepath.Abs(path)
-	if err != nil {
-		return err
-	}
-	for {
-		parent := filepath.Dir(path)
-		resolvedParent, err := canonicalAgentPath(parent)
-		if err != nil {
-			return err
-		}
-		candidates = append(candidates, filepath.Join(resolvedParent, filepath.Base(path)))
-		if parent == path {
-			break
-		}
-		path = parent
-	}
-	for _, candidate := range candidates {
-		rel, err := filepath.Rel(root, candidate)
+	for _, entry := range entries {
+		rel, err := filepath.Rel(root, entry)
 		if err != nil {
 			return err
 		}
 		if rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("path must be outside container workdir: %s", candidate)
+			return fmt.Errorf("path must be outside container workdir: %s", entry)
 		}
 	}
 	return nil
