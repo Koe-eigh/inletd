@@ -13,6 +13,7 @@ import (
 )
 
 type Config struct {
+	ConfigPath      string      `json:"-"`
 	Provider        string      `json:"provider"`
 	Gmail           GmailConfig `json:"gmail,omitempty"`
 	TokenEnv        string      `json:"token_env"`
@@ -52,6 +53,10 @@ type Rule struct {
 
 func loadConfig(path string) (Config, error) {
 	var c Config
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return c, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return c, err
@@ -81,6 +86,7 @@ func loadConfig(path string) (Config, error) {
 	if c.Workdir == "" || c.StateFile == "" {
 		return c, errors.New("workdir and state_file are required")
 	}
+	c.ConfigPath = path
 	base, err := filepath.Abs(filepath.Dir(path))
 	if err != nil {
 		return c, err
@@ -91,6 +97,8 @@ func loadConfig(path string) (Config, error) {
 	if !filepath.IsAbs(c.StateFile) {
 		c.StateFile = filepath.Join(base, c.StateFile)
 	}
+	c.Workdir = filepath.Clean(c.Workdir)
+	c.StateFile = filepath.Clean(c.StateFile)
 	info, err := os.Stat(c.Workdir)
 	if err != nil {
 		return c, fmt.Errorf("workdir: %w", err)

@@ -1,6 +1,6 @@
 {
   "repository": "OWNER/REPO",
-  "workdir": ".",
+  "workdir": "../inletd-agent-checkout",
   "state_file": ".inletd/state.json",
   "poll_seconds": 60,
   "agent_timeout_seconds": 1800,

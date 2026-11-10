@@ -13,7 +13,23 @@ import (
 )
 
 func TestExampleConfigsLoad(t *testing.T) {
-	config, err := loadConfig(filepath.Join("..", "inletd.example.json"))
+	dir := t.TempDir()
+	data, err := os.ReadFile(filepath.Join("..", "inletd.example.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "inletd-agent-checkout"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	configDir := filepath.Join(dir, "daemon")
+	if err := os.Mkdir(configDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(configDir, "inletd.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := loadConfig(path)
 	if err != nil {
 		t.Fatal(err)
 	}

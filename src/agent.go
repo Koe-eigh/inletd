@@ -41,9 +41,14 @@ func (r CommandAgentRunner) Run(ctx context.Context, e Event, rule Rule, values 
 		if err != nil {
 			return err
 		}
-		cmd = exec.Command("docker", containerArgs...)
+		client, err := newAgentDockerClient(r.Config.Workdir)
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(client.configDir)
+		cmd = exec.Command("docker", client.args(containerArgs...)...)
 		cmd.Env = env
-		defer removeAgentContainer(name)
+		defer client.removeContainer(name)
 	}
 	cmd.Dir = r.Config.Workdir
 	cmd.Stdin = strings.NewReader(prompt)

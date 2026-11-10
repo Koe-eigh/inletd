@@ -66,6 +66,7 @@ func TestAgentPolicyConfigValidation(t *testing.T) {
 	}{
 		{name: "implicit host rejected"},
 		{name: "container requires image", execution: AgentExecution{Profile: "container"}},
+		{name: "Docker settings cannot be action variables", execution: AgentExecution{Image: "agent"}, env: map[string]string{"DOCKER_CONTEXT": "ACTION"}},
 		{name: "container default", execution: AgentExecution{Image: "local/agent:tested"}, valid: true},
 		{name: "explicit host", execution: AgentExecution{Profile: "unrestricted"}, valid: true},
 		{name: "unknown profile", execution: AgentExecution{Profile: "sandbox"}},
@@ -84,7 +85,11 @@ func TestAgentPolicyConfigValidation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			c := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state"), TokenEnv: "CUSTOM_INGEST", Gmail: GmailConfig{SigningKeyEnv: "CUSTOM_HMAC"}, Rules: []Rule{{Event: "IssuesEvent", Command: []string{"agent"}, Prompt: "test", Execution: tc.execution, Env: tc.env}}}
+			workdir := filepath.Join(dir, "checkout")
+			if err := os.Mkdir(workdir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			c := Config{Repository: "acme/app", Workdir: workdir, StateFile: filepath.Join(dir, "state"), TokenEnv: "CUSTOM_INGEST", Gmail: GmailConfig{SigningKeyEnv: "CUSTOM_HMAC"}, Rules: []Rule{{Event: "IssuesEvent", Command: []string{"agent"}, Prompt: "test", Execution: tc.execution, Env: tc.env}}}
 			data, err := json.Marshal(c)
 			if err != nil {
 				t.Fatal(err)
@@ -145,12 +150,23 @@ func TestContainerDispatchAndCleanup(t *testing.T) {
 	for _, mode := range []string{"success", "failure", "timeout"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
+			poisonHostDockerConfig(t)
 			script := `#!/bin/sh
+set -e
 base=${0%/*}
+test "$1" = --config
+test "$3" = --host
+test "$4" = unix:///var/run/docker.sock
+config=$2
+test -d "$config"
+test -z "$(ls -A "$config")"
+shift 4
 if [ "$1" = rm ]; then
+ printf '%s\n' "$config" > "$base/cleanup-config"
  printf '%s\n' "$@" > "$base/cleanup"
  exit 0
 fi
+printf '%s\n' "$config" > "$base/run-config"
 printf '%s\n' "$@" > "$base/args"
 env | cut -d= -f1 > "$base/env"
 cat > "$base/stdin"
@@ -196,6 +212,17 @@ cat > "$base/stdin"
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
+			runConfig, err := os.ReadFile(filepath.Join(dir, "run-config"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cleanupConfig, err := os.ReadFile(filepath.Join(dir, "cleanup-config"))
+			if err != nil || string(runConfig) != string(cleanupConfig) {
+				t.Fatal("run and cleanup used different Docker configurations")
+			}
+			if _, err := os.Stat(strings.TrimSpace(string(runConfig))); !os.IsNotExist(err) {
+				t.Fatal("temporary Docker config was not removed")
+			}
 			vars := strings.Split(string(env), "\n")
 			if slices.Contains(vars, "GITHUB_TOKEN") || !slices.Contains(vars, "GH_TOKEN") {
 				t.Fatal("Docker client environment leaked intake token or lost action credential")
@@ -218,8 +245,13 @@ func TestContainerIsolation(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "intake-must-not-leak")
 	t.Setenv("INLETD_GMAIL_SIGNING_KEY", "signing-must-not-leak")
 	t.Setenv("INLETD_ISOLATION_ACTION", "isolated-action")
+	poisonHostDockerConfig(t)
 	script := `test "${GITHUB_TOKEN+x}" != x
 test "${INLETD_GMAIL_SIGNING_KEY+x}" != x
+test "${HTTP_PROXY+x}" != x
+test "${http_proxy+x}" != x
+test "${HTTPS_PROXY+x}" != x
+test "${https_proxy+x}" != x
 test "$GH_TOKEN" = isolated-action
 test "$HOME" = /tmp
 test "$(id -u)" -ne 0
@@ -238,4 +270,23 @@ printf isolated > /workspace/result
 			t.Fatalf("container output %s: error=%v", file, err)
 		}
 	}
+}
+
+func poisonHostDockerConfig(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	config := filepath.Join(home, ".docker")
+	if err := os.Mkdir(config, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"currentContext":"untrusted-remote-context","proxies":{"default":{"httpProxy":"http://user:dummy@127.0.0.1:1","httpsProxy":"http://user:dummy@127.0.0.1:1"}}}`)
+	if err := os.WriteFile(filepath.Join(config, "config.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("DOCKER_CONFIG", config)
+	t.Setenv("DOCKER_CONTEXT", "untrusted-remote-context")
+	t.Setenv("DOCKER_HOST", "tcp://127.0.0.1:1")
+	t.Setenv("DOCKER_TLS_VERIFY", "1")
+	t.Setenv("HTTP_PROXY", "http://user:dummy@127.0.0.1:1")
 }

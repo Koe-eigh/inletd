@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,6 +37,9 @@ func ingestEnv(c Config, name string) bool {
 func validateAgentPolicy(c Config, rule Rule) error {
 	switch rule.Execution.Profile {
 	case "", "container":
+		if err := validateContainerPaths(c); err != nil {
+			return err
+		}
 		if rule.Execution.Image == "" || strings.HasPrefix(rule.Execution.Image, "-") || containsEventPlaceholder(rule.Execution.Image) {
 			return fmt.Errorf("container execution requires a fixed image; host execution requires explicit profile unrestricted")
 		}
@@ -50,6 +54,9 @@ func validateAgentPolicy(c Config, rule Rule) error {
 		return fmt.Errorf("execution profile must be container or unrestricted")
 	}
 	for target, source := range rule.Env {
+		if rule.Execution.Profile != "unrestricted" && strings.HasPrefix(strings.ToUpper(target), "DOCKER_") {
+			return fmt.Errorf("container env cannot override Docker client settings: %s", target)
+		}
 		if !validEnvName(target) || !validEnvName(source) {
 			return fmt.Errorf("env must map valid variable names to source variable names")
 		}
@@ -129,12 +136,136 @@ func containerCommand(c Config, rule Rule, command []string) ([]string, string, 
 	return args, name, nil
 }
 
-func removeAgentContainer(name string) {
-	// The Docker CLI can exit before its container. Use a fresh bounded context
-	// on success, cancellation, and failure, without passing any action secrets.
+// agentDockerClient owns a fresh config directory outside the mounted checkout.
+// Flags take precedence over HOME fallback, saved contexts, and proxy settings.
+type agentDockerClient struct{ configDir string }
+
+const agentDockerHost = "unix:///var/run/docker.sock"
+
+func newAgentDockerClient(workdir string) (agentDockerClient, error) {
+	dir, err := os.MkdirTemp("", "inletd-docker-")
+	if err != nil {
+		return agentDockerClient{}, err
+	}
+	client := agentDockerClient{configDir: dir}
+	if err := outsideWorkdir(workdir, dir); err != nil {
+		os.RemoveAll(dir)
+		return agentDockerClient{}, fmt.Errorf("Docker config: %w", err)
+	}
+	return client, nil
+}
+
+func (d agentDockerClient) args(args ...string) []string {
+	return append([]string{"--config", d.configDir, "--host", agentDockerHost}, args...)
+}
+
+func (d agentDockerClient) removeContainer(name string) {
+	// Cleanup uses the same isolated configuration and endpoint as the run command,
+	// but no action secrets and a fresh context independent of agent cancellation.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", "rm", "--force", name)
+	cmd := exec.CommandContext(ctx, "docker", d.args("rm", "--force", name)...)
 	cmd.Env = []string{}
 	_ = cmd.Run()
+}
+
+// Resolve existing symlinks, including a dangling link's target and existing
+// parent directories when the final state file has not been created yet.
+func canonicalAgentPath(path string) (string, error) {
+	return canonicalAgentPathDepth(path, 0)
+}
+
+func canonicalAgentPathDepth(path string, depth int) (string, error) {
+	if depth > 255 {
+		return "", fmt.Errorf("too many path components or symbolic links")
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return resolved, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	info, statErr := os.Lstat(path)
+	if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		return canonicalAgentPathDepth(target, depth+1)
+	}
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		return "", statErr
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return "", err
+	}
+	resolved, err = canonicalAgentPathDepth(parent, depth+1)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, filepath.Base(path)), nil
+}
+
+func outsideWorkdir(workdir, path string) error {
+	root, err := canonicalAgentPath(workdir)
+	if err != nil {
+		return err
+	}
+	// Check every traversed directory entry as well as the final target. A path
+	// that enters the checkout and exits through another symlink is still mutable
+	// by the agent, even when its current final target is outside the mount.
+	target, err := canonicalAgentPath(path)
+	if err != nil {
+		return err
+	}
+	candidates := []string{target}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	for {
+		parent := filepath.Dir(path)
+		resolvedParent, err := canonicalAgentPath(parent)
+		if err != nil {
+			return err
+		}
+		candidates = append(candidates, filepath.Join(resolvedParent, filepath.Base(path)))
+		if parent == path {
+			break
+		}
+		path = parent
+	}
+	for _, candidate := range candidates {
+		rel, err := filepath.Rel(root, candidate)
+		if err != nil {
+			return err
+		}
+		if rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("path must be outside container workdir: %s", candidate)
+		}
+	}
+	return nil
+}
+
+func validateContainerPaths(c Config) error {
+	for _, path := range []string{c.ConfigPath, c.StateFile} {
+		if path != "" {
+			if err := outsideWorkdir(c.Workdir, path); err != nil {
+				return err
+			}
+		}
+	}
+	if c.StateFile != "" {
+		return outsideWorkdir(c.Workdir, c.StateFile+".lock")
+	}
+	return nil
 }

@@ -8,7 +8,7 @@ Use a dedicated mailbox or label and a dedicated state file. For example:
 {
   "provider": "gmail",
   "repository": "OWNER/REPO",
-  "workdir": ".",
+  "workdir": "../inletd-agent-checkout",
   "state_file": ".inletd/gmail-state.json",
   "poll_seconds": 120,
   "gmail": {
@@ -18,10 +18,17 @@ Use a dedicated mailbox or label and a dedicated state file. For example:
     "signing_key_env": "INLETD_GMAIL_SIGNING_KEY"
   },
   "rules": [
-    {"event": "IssuesEvent", "actions": ["opened"], "command": ["codex", "exec", "-"], "prompt": "Handle {url}"}
+    {
+      "event": "IssuesEvent", "actions": ["opened"],
+      "execution": {"profile": "container", "image": "inletd-agent:local", "network": "bridge"},
+      "env": {"GH_TOKEN": "INLETD_ACTION_GITHUB_TOKEN", "OPENAI_API_KEY": "INLETD_ACTION_OPENAI_API_KEY"},
+      "command": ["codex", "exec", "-"], "prompt": "Handle {url}"
+    }
   ]
 }
 ```
+
+Keep this config and `.inletd/` state directory outside the dedicated agent checkout. See [Agent execution and credentials](Agent-Security.md) for image setup and separate action tokens.
 
 Set `INLETD_GMAIL_SIGNING_KEY` to the same high entropy secret in inletd's environment and in your trusted email bridge. The secret must contain at least 32 bytes. `gmail.query` is a Gmail search query and can include a label. `gmail.cli_path` defaults to `gws`; `gmail.user_id` defaults to `me`. Set `provider` to `github` or `gitlab` to disable Gmail polling. The usual `-once` and `-replay-existing` options apply. On the first poll, existing messages are recorded without dispatch unless `-replay-existing` is supplied.
 

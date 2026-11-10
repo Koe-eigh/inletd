@@ -2,21 +2,22 @@
 
 Inletd requires Go 1.23 or later, a local checkout of the target repository, and an installed AI agent CLI. The example runs Codex CLI. Install and authenticate `gh` if you want the agent to read or write GitHub issues and PRs. Set `GITHUB_TOKEN` for private repositories and higher API rate limits; an existing `gh` login can provide the token.
 
-From the Inletd repository root:
+Keep the Inletd source/configuration directory separate from the disposable agent checkout. From the Inletd repository root:
 
 ```sh
+git clone https://github.com/OWNER/REPO.git ../inletd-agent-checkout
 cp inletd.example.json inletd.json
 ```
 
 Edit `inletd.json`:
 
 1. Set `repository` to `OWNER/REPO` for the GitHub repository to poll.
-2. Set `workdir` to the local checkout where the agent should run.
+2. Set `workdir` to the dedicated target checkout (the example uses `../inletd-agent-checkout`). Keep `inletd.json` and `.inletd/` in the Inletd directory outside that checkout.
 3. Replace every `YOUR_LOGIN` in `allowed_actors` with the GitHub login or logins allowed to request work. The automatic PR review rule does not use this allowlist.
 4. Configure every rule's `execution` and `env`. The examples require Docker, a locally built `inletd-agent:local` image, and separate action credentials. Read [Agent execution and credentials](Agent-Security.md) for image setup, network permissions, and migration from host execution.
 5. Review the rules, prompts, command arrays, state file, and agent permissions. Remove any workflow you do not want to enable. Rules run in file order, and the first match wins.
 
-The config's `workdir` and `state_file` paths are resolved relative to the config file. The default example keeps state in `.inletd/state.json`. Use a separate state path if testing a different event history.
+The config's `workdir` and `state_file` paths are resolved relative to the config file. The default example keeps state in `.inletd/state.json`. Use a separate state path if testing a different event history. Container rules reject config/state paths inside or traversing the writable checkout, including symlink aliases and not-yet-created state paths.
 
 Start by recording the currently visible events without dispatching them, then poll continuously:
 
