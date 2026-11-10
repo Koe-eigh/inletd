@@ -13,6 +13,7 @@ import (
 )
 
 type Config struct {
+	ConfigPath      string      `json:"-"`
 	Provider        string      `json:"provider"`
 	Gmail           GmailConfig `json:"gmail,omitempty"`
 	TokenEnv        string      `json:"token_env"`
@@ -32,18 +33,30 @@ type GmailConfig struct {
 	SigningKeyEnv string `json:"signing_key_env"`
 }
 
+type AgentExecution struct {
+	Profile string `json:"profile,omitempty"`
+	Image   string `json:"image,omitempty"`
+	Network string `json:"network,omitempty"`
+}
+
 type Rule struct {
-	Event          string   `json:"event"`
-	Actions        []string `json:"actions"`
-	Command        []string `json:"command"`
-	Prompt         string   `json:"prompt"`
-	CommentCommand string   `json:"comment_command"`
-	CommentTarget  string   `json:"comment_target"`
-	AllowedActors  []string `json:"allowed_actors"`
+	Execution      AgentExecution    `json:"execution"`
+	Env            map[string]string `json:"env,omitempty"`
+	Event          string            `json:"event"`
+	Actions        []string          `json:"actions"`
+	Command        []string          `json:"command"`
+	Prompt         string            `json:"prompt"`
+	CommentCommand string            `json:"comment_command"`
+	CommentTarget  string            `json:"comment_target"`
+	AllowedActors  []string          `json:"allowed_actors"`
 }
 
 func loadConfig(path string) (Config, error) {
 	var c Config
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return c, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return c, err
@@ -73,6 +86,7 @@ func loadConfig(path string) (Config, error) {
 	if c.Workdir == "" || c.StateFile == "" {
 		return c, errors.New("workdir and state_file are required")
 	}
+	c.ConfigPath = path
 	base, err := filepath.Abs(filepath.Dir(path))
 	if err != nil {
 		return c, err
@@ -83,6 +97,8 @@ func loadConfig(path string) (Config, error) {
 	if !filepath.IsAbs(c.StateFile) {
 		c.StateFile = filepath.Join(base, c.StateFile)
 	}
+	c.Workdir = filepath.Clean(c.Workdir)
+	c.StateFile = filepath.Clean(c.StateFile)
 	info, err := os.Stat(c.Workdir)
 	if err != nil {
 		return c, fmt.Errorf("workdir: %w", err)
@@ -140,6 +156,9 @@ func loadConfig(path string) (Config, error) {
 	for _, rule := range c.Rules {
 		if rule.Event == "" || len(rule.Command) == 0 || rule.Prompt == "" {
 			return c, errors.New("each rule needs event, command and prompt")
+		}
+		if err := validateAgentPolicy(c, rule); err != nil {
+			return c, fmt.Errorf("rule %q: %w", rule.Event, err)
 		}
 		if err := validateCommandTemplate(rule.Command); err != nil {
 			return c, fmt.Errorf("rule %q: %w", rule.Event, err)

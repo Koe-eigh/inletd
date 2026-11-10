@@ -21,6 +21,10 @@ jobs:
           cache: false
       - name: Test
         run: go test ./...
+      - name: Test container isolation
+        run: |
+          docker pull alpine:3.22
+          INLETD_TEST_DOCKER_IMAGE=alpine:3.22 go test ./src -run '^TestContainerIsolation$' -v
       - name: Test Gmail bridge
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py'
       - name: Vet

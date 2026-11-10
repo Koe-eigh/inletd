@@ -48,7 +48,7 @@ func TestStateLockRejectsOtherProcessesDuringDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), APIURL: server, AgentTimeoutSec: 15,
-		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Command: []string{testBinary, "-test.run=^TestStateLockAgentHelper$"}, Prompt: "test"}}}
+		Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}, Env: map[string]string{"INLETD_LOCK_TEST_AGENT": "INLETD_LOCK_TEST_AGENT"}, Execution: AgentExecution{Profile: "unrestricted"}, Command: []string{testBinary, "-test.run=^TestStateLockAgentHelper$"}, Prompt: "test"}}}
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
