@@ -27,7 +27,24 @@ func (r CommandAgentRunner) Run(ctx context.Context, e Event, rule Rule, values 
 	}
 	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(r.Config.AgentTimeoutSec)*time.Second)
 	defer cancel()
+	if err := validateAgentPolicy(r.Config, rule); err != nil {
+		return err
+	}
+	env, err := agentEnvironment(r.Config, rule)
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Env = env
+	if rule.Execution.Profile != "unrestricted" {
+		containerArgs, name, err := containerCommand(r.Config, rule, args)
+		if err != nil {
+			return err
+		}
+		cmd = exec.Command("docker", containerArgs...)
+		cmd.Env = env
+		defer removeAgentContainer(name)
+	}
 	cmd.Dir = r.Config.Workdir
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr

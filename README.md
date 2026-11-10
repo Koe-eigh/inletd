@@ -18,6 +18,7 @@ It listens for remote events such as GitHub events, and automatically triggers l
 - [Limitations](https://github.com/Koe-eigh/inletd/wiki/Limitations)
 - [GitLab projects](docs/wiki/GitLab.md)
 - [Gmail polling](docs/wiki/Gmail.md)
+- [Agent execution and credentials](docs/wiki/Agent-Security.md)
 
 ## Gmail polling
 

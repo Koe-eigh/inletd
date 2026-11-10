@@ -59,7 +59,7 @@ func TestAgentStopsDescendantsOnContextEnd(t *testing.T) {
 				defer cancel()
 			}
 			r := CommandAgentRunner{Config: Config{Workdir: dir, AgentTimeoutSec: 5}}
-			rule := Rule{Command: []string{"sh", "-c", "sh -c 'sleep 2; printf survived > marker' & printf ready > ready; wait"}, Prompt: "test"}
+			rule := Rule{Execution: AgentExecution{Profile: "unrestricted"}, Command: []string{"sh", "-c", "sh -c 'sleep 2; printf survived > marker' & printf ready > ready; wait"}, Prompt: "test"}
 			result := make(chan error, 1)
 			go func() {
 				result <- r.Run(ctx, Event{}, rule, eventValues{})
@@ -101,7 +101,7 @@ func TestAgentForceStopsProcessIgnoringTERM(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	r := CommandAgentRunner{Config: Config{Workdir: dir, AgentTimeoutSec: 5}}
-	rule := Rule{Command: []string{"sh", "-c", "trap '' TERM; printf ready > ready; while :; do sleep 1; done"}, Prompt: "test"}
+	rule := Rule{Execution: AgentExecution{Profile: "unrestricted"}, Command: []string{"sh", "-c", "trap '' TERM; printf ready > ready; while :; do sleep 1; done"}, Prompt: "test"}
 	result := make(chan error, 1)
 	go func() {
 		result <- r.Run(ctx, Event{}, rule, eventValues{})

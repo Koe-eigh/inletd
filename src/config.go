@@ -32,14 +32,22 @@ type GmailConfig struct {
 	SigningKeyEnv string `json:"signing_key_env"`
 }
 
+type AgentExecution struct {
+	Profile string `json:"profile,omitempty"`
+	Image   string `json:"image,omitempty"`
+	Network string `json:"network,omitempty"`
+}
+
 type Rule struct {
-	Event          string   `json:"event"`
-	Actions        []string `json:"actions"`
-	Command        []string `json:"command"`
-	Prompt         string   `json:"prompt"`
-	CommentCommand string   `json:"comment_command"`
-	CommentTarget  string   `json:"comment_target"`
-	AllowedActors  []string `json:"allowed_actors"`
+	Execution      AgentExecution    `json:"execution"`
+	Env            map[string]string `json:"env,omitempty"`
+	Event          string            `json:"event"`
+	Actions        []string          `json:"actions"`
+	Command        []string          `json:"command"`
+	Prompt         string            `json:"prompt"`
+	CommentCommand string            `json:"comment_command"`
+	CommentTarget  string            `json:"comment_target"`
+	AllowedActors  []string          `json:"allowed_actors"`
 }
 
 func loadConfig(path string) (Config, error) {
@@ -140,6 +148,9 @@ func loadConfig(path string) (Config, error) {
 	for _, rule := range c.Rules {
 		if rule.Event == "" || len(rule.Command) == 0 || rule.Prompt == "" {
 			return c, errors.New("each rule needs event, command and prompt")
+		}
+		if err := validateAgentPolicy(c, rule); err != nil {
+			return c, fmt.Errorf("rule %q: %w", rule.Event, err)
 		}
 		if err := validateCommandTemplate(rule.Command); err != nil {
 			return c, fmt.Errorf("rule %q: %w", rule.Event, err)

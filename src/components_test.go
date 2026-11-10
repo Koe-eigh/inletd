@@ -227,7 +227,7 @@ func TestGitHubEventSourceCommitsETagAfterHandling(t *testing.T) {
 func TestAgentRendersPromptIntoArgumentsAndStdin(t *testing.T) {
 	dir := t.TempDir()
 	r := CommandAgentRunner{Config: Config{Workdir: dir, AgentTimeoutSec: 5}}
-	rule := Rule{Command: []string{"sh", "-c", "printf '%s\\n' \"$1\" > args.txt; cat > stdin.txt", "sh", "{prompt}"}, Prompt: "Issue {number}: {title}"}
+	rule := Rule{Execution: AgentExecution{Profile: "unrestricted"}, Command: []string{"sh", "-c", "printf '%s\\n' \"$1\" > args.txt; cat > stdin.txt", "sh", "{prompt}"}, Prompt: "Issue {number}: {title}"}
 	title := "$(touch injected); 'quoted'"
 	if err := r.Run(context.Background(), event("1", "IssuesEvent", "opened", 1, title), rule, eventValues{number: 1, title: title}); err != nil {
 		t.Fatal(err)
@@ -251,7 +251,7 @@ func TestAgentRejectsEventPlaceholdersInShellScripts(t *testing.T) {
 		{"{title}", "safe"},
 	} {
 		dir := t.TempDir()
-		rule := Rule{Event: "IssuesEvent", Command: command, Prompt: "Issue {title}"}
+		rule := Rule{Event: "IssuesEvent", Execution: AgentExecution{Profile: "unrestricted"}, Command: command, Prompt: "Issue {title}"}
 		config := Config{Repository: "acme/app", Workdir: dir, StateFile: filepath.Join(dir, "state.json"), Rules: []Rule{rule}}
 		b, err := json.Marshal(config)
 		if err != nil {

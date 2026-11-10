@@ -150,7 +150,7 @@ func TestGitLabPaginationAndRateLimit(t *testing.T) {
 func TestGitLabConfigDefaultsAndNoteGuard(t *testing.T) {
 	t.Setenv("GITLAB_TOKEN", "secret")
 	path := filepath.Join(t.TempDir(), "config.json")
-	data := `{"provider":"gitlab","repository":"group/sub/app","workdir":".","state_file":"state.json","rules":[{"event":"GitLabNoteEvent","command":["cat"],"prompt":"{url}","comment_command":"/inletd fix","comment_target":"pull_request","allowed_actors":["owner"]}]}`
+	data := `{"provider":"gitlab","repository":"group/sub/app","workdir":".","state_file":"state.json","rules":[{"event":"GitLabNoteEvent","execution":{"profile":"unrestricted"},"command":["cat"],"prompt":"{url}","comment_command":"/inletd fix","comment_target":"pull_request","allowed_actors":["owner"]}]}`
 	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
