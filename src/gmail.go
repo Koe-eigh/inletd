@@ -26,13 +26,15 @@ type GmailEventSource struct {
 	mailboxProcessed map[string]bool
 	legacyProcessed  map[string]bool
 	failures         int
+	checkpoint       int64
+	now              func() time.Time
 }
 
 func NewGmailEventSource(config Config, run gmailCLI) *GmailEventSource {
 	if run == nil {
 		run = runGmailCLI
 	}
-	return &GmailEventSource{config: config, run: run}
+	return &GmailEventSource{config: config, run: run, now: time.Now}
 }
 
 func runGmailCLI(ctx context.Context, path string, args ...string) ([]byte, error) {
@@ -121,12 +123,20 @@ func (s *GmailEventSource) failed(err error) (EventBatch, error) {
 }
 
 func (s *GmailEventSource) Fetch(ctx context.Context) (EventBatch, error) {
-	var batch EventBatch
+	// Freeze the query for every page. Commit the fetch start only after the
+	// runner has durably handled the entire batch; failures retry the old range.
+	now := s.now()
+	after := now.Add(-gmailBackfill).Unix()
+	if overlap := s.checkpoint - int64(gmailOverlap/time.Second); overlap > after && overlap < now.Unix() {
+		after = overlap
+	}
+	query := fmt.Sprintf("(%s) after:%d", s.config.Gmail.Query, after)
+	batch := EventBatch{GmailCheckpoint: now.Unix()}
 	token := ""
 	visited := map[string]bool{}
 	fetched := map[string]bool{}
 	for page := 0; page < 1000; page++ {
-		params := map[string]any{"userId": s.config.Gmail.UserID, "q": s.config.Gmail.Query, "maxResults": 100}
+		params := map[string]any{"userId": s.config.Gmail.UserID, "q": query, "maxResults": 100}
 		if token != "" {
 			params["pageToken"] = token
 		}

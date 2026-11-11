@@ -29,6 +29,7 @@ type Router interface {
 // EventBatch contains normalized events and source polling constraints.
 type EventBatch struct {
 	Events          []Event
+	GmailCheckpoint int64
 	GmailMessages   []string
 	GmailLegacySeen []string
 	PollInterval    time.Duration
@@ -56,6 +57,9 @@ type Runner struct {
 func (r *Runner) persist(s State) error {
 	if r.Store == nil {
 		return fmt.Errorf("state store is not configured")
+	}
+	if r.Config.Provider == "gmail" {
+		s = s.compactGmail(time.Now())
 	}
 	if err := r.Store.Save(s); err != nil {
 		return err
@@ -86,6 +90,11 @@ func (r *Runner) setJob(id string, job Job, seen bool) error {
 }
 
 func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
+	if r.Config.Provider == "gmail" {
+		if err := r.persist(r.State); err != nil {
+			return err
+		}
+	}
 	deferred := make(map[string]bool)
 	if r.State.Initialized {
 		// Retry durable jobs even after their source events leave GitHub's feed.
@@ -118,6 +127,10 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 	}
 	if gmail, ok := r.Source.(*GmailEventSource); ok {
 		gmail.SetProcessed(r.State.Seen, r.State.Jobs, r.State.GmailMessages)
+		gmail.checkpoint = r.State.GmailCheckpoint
+		if gmail.checkpoint > 0 && gmail.checkpoint < gmail.now().Add(-gmailBackfill).Unix() {
+			r.Logger.Printf("Gmail backfill limited to seven days; inspect bridge runs and resend older missed requests (see Gmail recovery documentation)")
+		}
 	}
 	batch, err := r.Source.Fetch(ctx)
 	if r.Config.Provider == "gmail" {
@@ -150,6 +163,7 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 			}
 		}
 		next.GmailMessages = append(slices.Clone(r.State.GmailMessages), batch.GmailMessages...)
+		next.GmailCheckpoint = batch.GmailCheckpoint
 		next.Initialized = true
 		if len(events) > 0 {
 			next.Cursor = events[0].ID
@@ -277,9 +291,10 @@ func (r *Runner) Poll(ctx context.Context, replayExisting bool) error {
 			return err
 		}
 	}
-	if len(batch.GmailMessages) > 0 {
+	if r.Config.Provider == "gmail" {
 		next := r.State
 		next.GmailMessages = append(slices.Clone(r.State.GmailMessages), batch.GmailMessages...)
+		next.GmailCheckpoint = batch.GmailCheckpoint
 		if err := r.persist(next); err != nil {
 			return err
 		}

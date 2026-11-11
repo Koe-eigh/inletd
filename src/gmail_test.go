@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -124,6 +125,17 @@ func TestGmailSignedDeliveryReplayAcrossMessagesAndRestart(t *testing.T) {
 	if len(r.State.Seen) != 2 || len(r.State.GmailMessages) != 4 {
 		t.Fatalf("state=%+v", r.State)
 	}
+	// After retention expires, a fresh mailbox copy intentionally becomes eligible.
+	r.State.GmailRetainedAt["gmail:acme/app:same-delivery"] = time.Now().Add(-31 * 24 * time.Hour).Unix()
+	if err := r.Store.Save(r.State); err != nil {
+		t.Fatal(err)
+	}
+	mailboxes = []string{"mail-e"}
+	r = makeRunner()
+	r.State, _ = r.Store.Load()
+	if err := r.Poll(context.Background(), false); err != nil || runs != 3 {
+		t.Fatalf("expired replay: runs=%d err=%v", runs, err)
+	}
 }
 
 func TestGmailLegacyMessageIDMigratesWithoutDispatch(t *testing.T) {
@@ -195,9 +207,10 @@ func TestGmailPaginationRetryAndRestartDedup(t *testing.T) {
 		return oldCLI(ctx, path, args...)
 	}
 	failGet = true
+	previousCheckpoint := next.State.GmailCheckpoint
 	source := NewGmailEventSource(cfg, cli)
 	next.Source = source
-	if err := next.Poll(context.Background(), false); err == nil || next.PollInterval != time.Minute || len(next.State.Seen) != 2 {
+	if err := next.Poll(context.Background(), false); err == nil || next.PollInterval != time.Minute || len(next.State.Seen) != 2 || next.State.GmailCheckpoint != previousCheckpoint {
 		t.Fatalf("retry state=%+v interval=%v err=%v", next.State, next.PollInterval, err)
 	}
 	failGet = false
@@ -241,5 +254,156 @@ func TestGmailBackoffAndAuthFailure(t *testing.T) {
 	batch, err := source.Fetch(context.Background())
 	if err == nil || batch.PollInterval != 15*time.Minute {
 		t.Fatalf("auth failure: interval=%v err=%v", batch.PollInterval, err)
+	}
+}
+
+// The mock mailbox represents >1000 historical pages. A temporal constraint
+// must be sent even on first startup, so those pages are never enumerated.
+func TestGmailBoundedSearchAndCheckpoint(t *testing.T) {
+	now := time.Unix(1800000000, 0)
+	cfg := Config{Gmail: GmailConfig{Query: "label:events OR subject:bridge"}}
+	source := NewGmailEventSource(cfg, nil)
+	source.now = func() time.Time { return now }
+	for _, checkpoint := range []int64{0, now.Add(-30 * 24 * time.Hour).Unix(), now.Add(-10 * time.Minute).Unix()} {
+		source.checkpoint = checkpoint
+		want := now.Add(-gmailBackfill).Unix()
+		if checkpoint > now.Add(-gmailBackfill).Unix() {
+			want = checkpoint - int64(gmailOverlap/time.Second)
+		}
+		calls := 0
+		source.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			calls++
+			var params map[string]any
+			if err := json.Unmarshal([]byte(args[len(args)-1]), &params); err != nil {
+				return nil, err
+			}
+			query := params["q"].(string)
+			if query != fmt.Sprintf("(%s) after:%d", cfg.Gmail.Query, want) {
+				t.Fatalf("unbounded query: %s", query)
+			}
+			return []byte(`{}`), nil
+		}
+		batch, err := source.Fetch(context.Background())
+		if err != nil || calls != 1 || batch.GmailCheckpoint != now.Unix() || source.checkpoint != checkpoint {
+			t.Fatalf("batch=%+v checkpoint=%d calls=%d err=%v", batch, source.checkpoint, calls, err)
+		}
+	}
+}
+
+func TestGmailRetentionMigrationExpirationAndActiveJobs(t *testing.T) {
+	now := time.Unix(1800000000, 0)
+	old := now.Add(-31 * 24 * time.Hour).Unix()
+	s := State{Seen: []string{"gmail:legacy", "gmail:repo:old", "gmail:repo:recent"}, GmailMessages: []string{"legacy", "old", "recent"}, GmailRetainedAt: map[string]int64{"gmail:repo:old": old, "gmail:repo:recent": now.Add(-time.Hour).Unix(), "message:old": old, "message:recent": now.Add(-time.Hour).Unix()}, Jobs: map[string]Job{"gmail:repo:old": {Status: jobCompleted}, "pending": {Status: jobPending}, "running": {Status: jobRunning}, "orphan": {Status: jobRejected}}}
+	next := s.compactGmail(now)
+	if slices.Contains(next.Seen, "gmail:repo:old") || slices.Contains(next.GmailMessages, "old") || len(next.Jobs) != 3 {
+		t.Fatalf("expiration: %+v", next)
+	}
+	if next.GmailRetainedAt["gmail:legacy"] != now.Unix() || next.GmailRetainedAt["message:legacy"] != now.Unix() {
+		t.Fatalf("migration: %+v", next)
+	}
+	// A failed write must not mutate the prior in-memory/durable snapshot.
+	if len(s.Seen) != 3 || len(s.Jobs) != 4 || s.GmailRetainedAt["gmail:legacy"] != 0 {
+		t.Fatal("mutated input")
+	}
+	later := next.compactGmail(now.Add(32 * 24 * time.Hour))
+	if len(later.Seen) != 0 || len(later.GmailMessages) != 0 || len(later.GmailRetainedAt) != 0 || len(later.Jobs) != 2 {
+		t.Fatalf("unbounded history: %+v", later)
+	}
+}
+
+func TestGmailCheckpointRestartAndSaveFailure(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	cfg := Config{Provider: "gmail", Gmail: GmailConfig{Query: "label:events"}}
+	store := &memoryStateStore{}
+	makeRunner := func() *Runner {
+		source := NewGmailEventSource(cfg, func(_ context.Context, _ string, args ...string) ([]byte, error) { return []byte(`{}`), nil })
+		source.now = func() time.Time { return now }
+		return &Runner{Config: cfg, Source: source, Store: store, State: store.state, Logger: log.New(io.Discard, "", 0)}
+	}
+	first := makeRunner()
+	if err := first.Poll(context.Background(), false); err != nil || store.state.GmailCheckpoint != now.Unix() {
+		t.Fatalf("initial empty poll: state=%+v err=%v", store.state, err)
+	}
+	previous := store.state.GmailCheckpoint
+	now = now.Add(10 * time.Minute)
+	restarted := makeRunner()
+	store.fail = func(s State) error {
+		if s.GmailCheckpoint != previous {
+			return errors.New("disk failed at checkpoint")
+		}
+		return nil
+	}
+	if err := restarted.Poll(context.Background(), false); err == nil || store.state.GmailCheckpoint != previous || restarted.State.GmailCheckpoint != previous {
+		t.Fatalf("advanced failed checkpoint: %+v err=%v", restarted.State, err)
+	}
+	source := restarted.Source.(*GmailEventSource)
+	if source.checkpoint != previous {
+		t.Fatal("restart did not restore checkpoint")
+	}
+	store.fail = nil
+	if err := restarted.Poll(context.Background(), false); err != nil || store.state.GmailCheckpoint != now.Unix() {
+		t.Fatalf("retry: %+v err=%v", store.state, err)
+	}
+}
+
+func TestGmailPageLimitLeavesCheckpointUncommitted(t *testing.T) {
+	source := NewGmailEventSource(Config{}, nil)
+	source.checkpoint = time.Now().Add(-time.Minute).Unix()
+	previous := source.checkpoint
+	pages := 0
+	source.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		pages++
+		return json.Marshal(map[string]any{"nextPageToken": fmt.Sprint(pages)})
+	}
+	batch, err := source.Fetch(context.Background())
+	if err == nil || pages != 1000 || batch.GmailCheckpoint != 0 || source.checkpoint != previous {
+		t.Fatalf("pages=%d batch=%+v err=%v", pages, batch, err)
+	}
+}
+
+func TestGmailOverlapFindsOutOfOrderArrivalAfterRestart(t *testing.T) {
+	t.Setenv("INLETD_GMAIL_SIGNING_KEY", testGmailKey)
+	now := time.Now().Truncate(time.Second)
+	lateMessageTime := now.Add(-30 * time.Minute)
+	visible := false
+	cfg := Config{Provider: "gmail", Repository: "acme/app", Gmail: GmailConfig{Query: "label:events", SigningKeyEnv: "INLETD_GMAIL_SIGNING_KEY"}, Rules: []Rule{{Event: "IssuesEvent", Actions: []string{"opened"}}}}
+	store := &memoryStateStore{}
+	runs := 0
+	makeRunner := func() *Runner {
+		source := NewGmailEventSource(cfg, func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			if args[3] == "get" {
+				return signedGmailMessage(t, "late"), nil
+			}
+			var params struct {
+				Query string `json:"q"`
+			}
+			if err := json.Unmarshal([]byte(args[len(args)-1]), &params); err != nil {
+				return nil, err
+			}
+			var after int64
+			parts := strings.Split(params.Query, " after:")
+			if len(parts) != 2 {
+				t.Fatalf("missing time bound: %s", params.Query)
+			}
+			if _, err := fmt.Sscan(parts[1], &after); err != nil {
+				return nil, err
+			}
+			if visible && after < lateMessageTime.Unix() {
+				return []byte(`{"messages":[{"id":"late"}]}`), nil
+			}
+			return []byte(`{}`), nil
+		})
+		source.now = func() time.Time { return now }
+		return &Runner{Config: cfg, Source: source, Router: DeclarativeRuleRouter{Rules: cfg.Rules}, AgentRunner: fakeAgentRunner(func(context.Context, Event, Rule, eventValues) error { runs++; return nil }), Store: store, State: store.state, Logger: log.New(io.Discard, "", 0)}
+	}
+	first := makeRunner()
+	if err := first.Poll(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(5 * time.Minute)
+	visible = true // Search indexing exposes mail older than the saved checkpoint.
+	restarted := makeRunner()
+	if err := restarted.Poll(context.Background(), false); err != nil || runs != 1 {
+		t.Fatalf("missed delayed mail: runs=%d err=%v", runs, err)
 	}
 }
