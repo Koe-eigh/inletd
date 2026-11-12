@@ -136,6 +136,10 @@ func (s *GitLabEventSource) normalize(ctx context.Context, a gitLabActivity) (Ev
 	e.ID = fmt.Sprintf("gitlab:%s:%d:%d", strings.TrimRight(s.config.APIURL, "/"), a.ProjectID, a.ID)
 	e.Provider = "gitlab"
 	e.Repo.Name = s.config.Repository
+	// Keep ignored activities in the feed for cursor overlap and gap detection.
+	// An empty type cannot match a configured rule, but the router still needs
+	// valid JSON. Supported activities replace both fields below.
+	e.Payload = json.RawMessage(`{}`)
 	e.Actor.Login = a.Author.Username
 	if e.Actor.Login == "" {
 		e.Actor.Login = a.AuthorUsername
@@ -184,7 +188,6 @@ func (s *GitLabEventSource) normalize(ctx context.Context, a gitLabActivity) (Ev
 		if kind != "issue" && kind != "mergerequest" && kind != "merge_request" {
 			return e, true, nil
 		}
-		e.Type = "GitLabNoteEvent"
 		payload.Action = "created"
 		payload.Issue.Number = a.Note.NoteableIID
 		payload.Comment.Body = a.Note.Body
@@ -192,6 +195,7 @@ func (s *GitLabEventSource) normalize(ctx context.Context, a gitLabActivity) (Ev
 		if payload.Comment.User.Login == "" {
 			return e, true, nil
 		}
+		e.Type = "GitLabNoteEvent"
 		resourceType, webSegment := "issues", "issues"
 		if kind != "issue" {
 			resourceType, webSegment = "merge_requests", "merge_requests"
